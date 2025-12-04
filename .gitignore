@@ -1,0 +1,97 @@
+#############################
+# 🚫 절대 올라가면 안 되는 민감정보
+#############################
+
+# 환경 변수 파일
+.env
+*.env
+
+# 로컬 DB 정보 들어 있는 파일
+application-local.properties
+application-dev.properties
+application-prod.properties
+
+# 인증서 / 키 파일
+*.pem
+*.key
+*.p12
+*.jks
+*service-account*.json
+*credentials*.json
+
+# SQL / CSV / Spreadsheet (민감데이터 가능성 높음)
+*.sql
+*.csv
+*.xlsx
+*.xls
+
+
+#############################
+# ✔ 정상적으로 올라가야 하는 설정 파일 제외
+#############################
+# 아래 파일들은 "올라가야 하는 파일"이라서 Ignore에서 제외함
+!application.properties
+!application-docker.properties
+
+
+#############################
+# Java
+#############################
+*.class
+*.jar
+*.war
+*.ear
+
+
+#############################
+# Gradle
+#############################
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+
+#############################
+# Spring Boot
+#############################
+logs/
+*.log
+hs_err_pid*
+replay_*.log
+
+
+#############################
+# 프로젝트 전용 (파일 업로드, 로컬 DB 데이터 등)
+#############################
+uploads/
+mysql_data/
+docker-data/
+
+
+#############################
+# IDE 설정 (IntelliJ / VSCode / NetBeans)
+#############################
+
+# IntelliJ
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+# VSCode
+.vscode/
+
+# NetBeans
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+
+#############################
+# OS 파일
+#############################
+.DS_Store
+Thumbs.db
