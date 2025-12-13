@@ -24,6 +24,7 @@ jobs:
 
       # 3) Gradle 빌드 (테스트는 일단 생략)
       - name: Build with Gradle
+        working-directory: .
         run: |
           chmod +x ./gradlew
           ./gradlew clean build -x test

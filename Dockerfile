@@ -4,8 +4,11 @@ FROM eclipse-temurin:17-jdk
 # 2) 컨테이너 내부 작업 디렉토리
 WORKDIR /app
 
-# 3) 빌드된 JAR 복사 (미리 ./gradlew build 수행)
-COPY build/libs/disaster-ar.jar app.jar
+## 3) 빌드된 JAR 복사 (미리 ./gradlew build 수행)
+#COPY build/libs/disaster-ar.jar app.jar
+
+# 🔥 이름 고정하지 말고 와일드카드 사용
+COPY build/libs/*.jar app.jar
 
 # 4) 도커에서는 docker 프로필 사용
 ENV SPRING_PROFILES_ACTIVE=docker
