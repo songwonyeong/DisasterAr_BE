@@ -9,4 +9,5 @@ public class JoinClassroomRequest {
 
     // 방 입장 코드
     private String joinCode;
+    private String studentName;
 }

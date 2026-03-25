@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import com.example.disaster_ar.dto.room.RoomUpdateRequest;
+import com.example.disaster_ar.dto.room.TrainingStatusResponse;
 
 import java.util.List;
 
@@ -80,5 +81,13 @@ public class RoomController {
     ) {
         RoomResponse res = roomService.regenerateJoinCode(classroomId, userId);
         return ResponseEntity.ok(res);
+    }
+
+    @GetMapping("/{classroomId}/training-status")
+    public ResponseEntity<TrainingStatusResponse> getTrainingStatus(
+            @PathVariable String classroomId,
+            @RequestParam String studentId
+    ) {
+        return ResponseEntity.ok(roomService.getTrainingStatus(classroomId, studentId));
     }
 }

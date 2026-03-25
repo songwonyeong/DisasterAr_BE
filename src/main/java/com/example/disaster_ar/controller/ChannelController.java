@@ -1,6 +1,6 @@
 package com.example.disaster_ar.controller;
 
-import com.example.disaster_ar.domain.School;
+import com.example.disaster_ar.domain.v4.SchoolV4;
 import com.example.disaster_ar.dto.channel.JoinClassroomRequest;
 import com.example.disaster_ar.dto.channel.JoinClassroomResponse;
 import com.example.disaster_ar.dto.channel.JoinSchoolRequest;
@@ -32,11 +32,11 @@ public class ChannelController {
     // ✅ 1) 학교 채널 생성 - 이미지 여러 개 업로드 가능
     @Operation(summary = "학교 채널 생성(지도 이미지 여러 개 선택 가능)")
     @PostMapping(consumes = {MediaType.MULTIPART_FORM_DATA_VALUE})
-    public ResponseEntity<School> createChannel(
+    public ResponseEntity<SchoolV4> createChannel(
             @RequestPart("schoolName") String schoolName,
             @RequestPart(value = "mapImages", required = false) List<MultipartFile> mapImages
     ) {
-        School created = channelService.createChannel(schoolName, mapImages, uploadDir);
+        SchoolV4 created = channelService.createChannel(schoolName, mapImages, uploadDir);
         return ResponseEntity.ok(created);
     }
 
@@ -70,6 +70,6 @@ public class ChannelController {
     public ResponseEntity<JoinClassroomResponse> joinClassroom(
             @RequestBody JoinClassroomRequest req
     ) {
-        return ResponseEntity.ok(channelService.joinByJoinCode(req.getJoinCode()));
+        return ResponseEntity.ok(channelService.joinRoom(req));
     }
 }

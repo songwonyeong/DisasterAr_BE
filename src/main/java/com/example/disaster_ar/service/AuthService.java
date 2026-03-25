@@ -1,8 +1,8 @@
 package com.example.disaster_ar.service;
 
-import com.example.disaster_ar.domain.School;
-import com.example.disaster_ar.domain.User;
-import com.example.disaster_ar.domain.enums.UserRole;
+import com.example.disaster_ar.domain.v4.SchoolV4;
+import com.example.disaster_ar.domain.v4.UserV4;
+import com.example.disaster_ar.domain.v4.enums.UserRole;
 import com.example.disaster_ar.dto.auth.AuthResponse;
 import com.example.disaster_ar.dto.auth.LoginRequest;
 import com.example.disaster_ar.dto.auth.SignupRequest;
@@ -32,30 +32,35 @@ public class AuthService {
             throw new IllegalArgumentException("이미 존재하는 이메일입니다.");
         }
 
-        // 2) 학교 조회/생성 (동시성 방어 포함)
-        School school = schoolRepository.findBySchoolName(req.getSchoolName())
+        // 2) 학교 조회/생성 (동시성 방어)
+        SchoolV4 school = schoolRepository.findBySchoolName(req.getSchoolName())
                 .orElseGet(() -> {
-                    School s = new School();                         // ✅ id 수동 세팅 금지
+                    SchoolV4 s = new SchoolV4();
+                    // id 생성 전략이 @GeneratedValue(UUID)가 아니면 필수
+                    if (s.getId() == null) s.setId(UUID.randomUUID().toString());
+
                     s.setSchoolName(req.getSchoolName());
                     s.setAccessCode(generateAccessCode());
+
                     try {
-                        return schoolRepository.saveAndFlush(s);     // 즉시 INSERT 시도
+                        return schoolRepository.saveAndFlush(s);
                     } catch (DataIntegrityViolationException e) {
-                        // UNIQUE(school_name) 충돌 시 다른 트랜잭션이 선점했을 수 있으므로 재조회
+                        // UNIQUE(school_name) 충돌 시 재조회
                         return schoolRepository.findBySchoolName(req.getSchoolName())
                                 .orElseThrow(() -> e);
                     }
                 });
 
-        // 3) 사용자 생성 (id 수동 세팅 금지 → @GeneratedValue 전략으로 INSERT)
-        User user = new User();
+        // 3) 사용자 생성
+        UserV4 user = new UserV4();
+        if (user.getId() == null) user.setId(UUID.randomUUID().toString());
+
         user.setEmail(req.getEmail());
         user.setPassword(passwordEncoder.encode(req.getPassword()));
         user.setName(req.getName());
         user.setRole(UserRole.TEACHER);
-        user.setSchool(school);
 
-        userRepository.save(user); // INSERT
+        userRepository.save(user);
 
         return new AuthResponse(
                 user.getId(),
@@ -68,14 +73,15 @@ public class AuthService {
 
     @Transactional(readOnly = true)
     public AuthResponse login(LoginRequest req) {
-        User user = userRepository.findByEmail(req.getEmail())
+        UserV4 user = userRepository.findByEmail(req.getEmail())
                 .orElseThrow(() -> new IllegalArgumentException("이메일 또는 비밀번호가 올바르지 않습니다."));
 
         if (!passwordEncoder.matches(req.getPassword(), user.getPassword())) {
             throw new IllegalArgumentException("이메일 또는 비밀번호가 올바르지 않습니다.");
         }
 
-        String schoolId = Optional.ofNullable(user.getSchool()).map(School::getId).orElse(null);
+        // V4 User에 school FK가 없다면(네 V4 DDL users에는 school_id 없음) → null 반환이 정상
+        String schoolId = null;
 
         return new AuthResponse(
                 user.getId(),
@@ -87,6 +93,10 @@ public class AuthService {
     }
 
     private String generateAccessCode() {
-        return UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+        String code;
+        do {
+            code = UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+        } while (schoolRepository.findByAccessCode(code).isPresent());
+        return code;
     }
 }
