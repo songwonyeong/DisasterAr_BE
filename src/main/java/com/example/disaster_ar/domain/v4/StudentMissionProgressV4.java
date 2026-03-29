@@ -44,9 +44,11 @@ public class StudentMissionProgressV4 {
     @Column(name = "required_count", nullable = false)
     private Integer requiredCount;
 
+    @Builder.Default
     @Column(name = "progress_count", nullable = false)
     private Integer progressCount = 0;
 
+    @Builder.Default
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 20)
     private ProgressStatus status = ProgressStatus.IN_PROGRESS;

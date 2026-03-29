@@ -1,15 +1,17 @@
 package com.example.disaster_ar.controller;
 
-import com.example.disaster_ar.dto.room.RoomCreateRequest;
-import com.example.disaster_ar.dto.room.RoomResponse;
+import com.example.disaster_ar.dto.room.*;
 import com.example.disaster_ar.service.RoomService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import com.example.disaster_ar.dto.room.RoomUpdateRequest;
-import com.example.disaster_ar.dto.room.TrainingStatusResponse;
+import com.example.disaster_ar.dto.room.StudentRoomResponse;
+import com.example.disaster_ar.dto.room.StudentKickResponse;
+import com.example.disaster_ar.dto.room.ActiveMapResponse;
+import com.example.disaster_ar.dto.room.ActiveMapUpdateRequest;
+import com.example.disaster_ar.dto.room.GameStartContextResponse;
 
 import java.util.List;
 
@@ -89,5 +91,87 @@ public class RoomController {
             @RequestParam String studentId
     ) {
         return ResponseEntity.ok(roomService.getTrainingStatus(classroomId, studentId));
+    }
+
+    @GetMapping("/{classroomId}/map")
+    public ResponseEntity<RoomMapResponse> getRoomMap(
+            @PathVariable String classroomId
+    ) {
+        return ResponseEntity.ok(roomService.getRoomMap(classroomId));
+    }
+
+    @PostMapping("/{classroomId}/training/end")
+    public ResponseEntity<TrainingControlResponse> endTraining(
+            @PathVariable String classroomId
+    ) {
+        return ResponseEntity.ok(roomService.endTraining(classroomId));
+    }
+
+    @GetMapping("/{classroomId}/students")
+    public ResponseEntity<List<StudentRoomResponse>> getStudents(
+            @PathVariable String classroomId
+    ) {
+        return ResponseEntity.ok(roomService.getStudents(classroomId));
+    }
+
+    @DeleteMapping("/{classroomId}/students/{studentId}")
+    public ResponseEntity<StudentKickResponse> kickStudent(
+            @PathVariable String classroomId,
+            @PathVariable String studentId
+    ) {
+        return ResponseEntity.ok(roomService.kickStudent(classroomId, studentId));
+    }
+
+    @PostMapping("/{classroomId}/map-versions")
+    public ResponseEntity<RoomMapVersionResponse> createMapVersion(
+            @PathVariable String classroomId,
+            @RequestBody RoomMapVersionCreateRequest req
+    ) {
+        return ResponseEntity.ok(
+                roomService.createMapVersion(classroomId, req)
+        );
+    }
+
+    @PutMapping("/{classroomId}/active-map")
+    public ResponseEntity<ActiveMapResponse> updateActiveMap(
+            @PathVariable String classroomId,
+            @RequestBody ActiveMapUpdateRequest req
+    ) {
+        return ResponseEntity.ok(
+                roomService.updateActiveMap(classroomId, req)
+        );
+    }
+
+    @GetMapping("/{classroomId}/game-start-context")
+    public ResponseEntity<GameStartContextResponse> getGameStartContext(
+            @PathVariable String classroomId
+    ) {
+        return ResponseEntity.ok(
+                roomService.getGameStartContext(classroomId)
+        );
+    }
+
+    @GetMapping("/{classroomId}/map-versions")
+    public ResponseEntity<java.util.List<RoomMapVersionSummaryResponse>> getMapVersions(
+            @PathVariable String classroomId
+    ) {
+        return ResponseEntity.ok(roomService.getMapVersions(classroomId));
+    }
+
+    @GetMapping("/{classroomId}/map-versions/{mapVersionId}")
+    public ResponseEntity<RoomMapVersionDetailResponse> getMapVersion(
+            @PathVariable String classroomId,
+            @PathVariable String mapVersionId
+    ) {
+        return ResponseEntity.ok(roomService.getMapVersion(classroomId, mapVersionId));
+    }
+
+    @PutMapping("/{classroomId}/map-versions/{mapVersionId}")
+    public ResponseEntity<RoomMapVersionDetailResponse> updateMapVersion(
+            @PathVariable String classroomId,
+            @PathVariable String mapVersionId,
+            @RequestBody RoomMapVersionUpdateRequest req
+    ) {
+        return ResponseEntity.ok(roomService.updateMapVersion(classroomId, mapVersionId, req));
     }
 }

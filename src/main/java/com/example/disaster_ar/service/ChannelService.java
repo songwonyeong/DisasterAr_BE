@@ -12,10 +12,13 @@ import com.example.disaster_ar.repository.ChannelMapRepositoryV4;
 import com.example.disaster_ar.repository.ClassroomRepository;
 import com.example.disaster_ar.repository.SchoolRepository;
 import com.example.disaster_ar.repository.StudentRepositoryV4;
+import com.example.disaster_ar.dto.channel.ChannelMapResponse;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+import com.example.disaster_ar.dto.channel.ChannelMapResponse;
+import com.example.disaster_ar.dto.channel.ChannelMapUpdateRequest;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -168,7 +171,65 @@ public class ChannelService {
                 .build();
     }
 
+    public List<ChannelMapResponse> getChannelMaps(String schoolId) {
+        SchoolV4 school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("학교가 존재하지 않습니다."));
+
+        return channelMapRepositoryV4.findBySchool_IdOrderByFloorIndexAsc(school.getId())
+                .stream()
+                .map(cm -> ChannelMapResponse.builder()
+                        .mapId(cm.getId())
+                        .floorIndex(cm.getFloorIndex())
+                        .floorLabel(cm.getFloorLabel())
+                        .uploadedImage(cm.getUploadedImage())
+                        .outlineJson(cm.getOutlineJson())
+                        .scaleMPerPx(cm.getScaleMPerPx())
+                        .originX(cm.getOriginX())
+                        .originY(cm.getOriginY())
+                        .elementsJson(cm.getElementsJson())
+                        .updatedAt(cm.getUpdatedAt())
+                        .build())
+                .toList();
+    }
+
     private String generateAccessCode() {
         return UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+    }
+
+    public ChannelMapResponse updateChannelMap(String schoolId, String mapId, ChannelMapUpdateRequest req) {
+        SchoolV4 school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("학교가 존재하지 않습니다."));
+
+        ChannelMapV4 map = channelMapRepositoryV4.findById(mapId)
+                .orElseThrow(() -> new IllegalArgumentException("구조도 맵이 존재하지 않습니다."));
+
+        if (map.getSchool() == null || !map.getSchool().getId().equals(school.getId())) {
+            throw new IllegalArgumentException("해당 구조도는 이 학교 소속이 아닙니다.");
+        }
+
+        if (req.getFloorIndex() != null) map.setFloorIndex(req.getFloorIndex());
+        if (req.getFloorLabel() != null) map.setFloorLabel(req.getFloorLabel());
+        if (req.getOutlineJson() != null) map.setOutlineJson(req.getOutlineJson());
+        if (req.getScaleMPerPx() != null) map.setScaleMPerPx(req.getScaleMPerPx());
+        if (req.getOriginX() != null) map.setOriginX(req.getOriginX());
+        if (req.getOriginY() != null) map.setOriginY(req.getOriginY());
+        if (req.getElementsJson() != null) map.setElementsJson(req.getElementsJson());
+
+        map.setUpdatedAt(LocalDateTime.now());
+
+        ChannelMapV4 saved = channelMapRepositoryV4.save(map);
+
+        return ChannelMapResponse.builder()
+                .mapId(saved.getId())
+                .floorIndex(saved.getFloorIndex())
+                .floorLabel(saved.getFloorLabel())
+                .uploadedImage(saved.getUploadedImage())
+                .outlineJson(saved.getOutlineJson())
+                .scaleMPerPx(saved.getScaleMPerPx())
+                .originX(saved.getOriginX())
+                .originY(saved.getOriginY())
+                .elementsJson(saved.getElementsJson())
+                .updatedAt(saved.getUpdatedAt())
+                .build();
     }
 }

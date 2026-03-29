@@ -7,14 +7,24 @@ import lombok.*;
 @Table(
         name = "beacons",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uq_ibeacon_triplet", columnNames = {"uuid", "major", "minor"})
+                @UniqueConstraint(
+                        name = "uq_ibeacon_triplet_per_school",
+                        columnNames = {"school_id", "uuid", "major", "minor"}
+                ),
+                @UniqueConstraint(
+                        name = "uq_beacon_no_per_school_floor",
+                        columnNames = {"school_id", "floor_index", "beacon_no"}
+                )
         },
         indexes = {
                 @Index(name = "idx_beacons_school_floor", columnList = "school_id, floor_index")
         }
 )
-@Getter @Setter
-@NoArgsConstructor @AllArgsConstructor @Builder
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class BeaconV4 extends BaseTimeEntity {
 
     @Id
@@ -62,5 +72,5 @@ public class BeaconV4 extends BaseTimeEntity {
     private Integer txPower;
 
     @Column(name = "beacon_no")
-    private Integer beaconNO;
+    private Integer beaconNo;
 }

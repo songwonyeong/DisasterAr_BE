@@ -14,6 +14,9 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import com.example.disaster_ar.dto.channel.ChannelMapResponse;
+import com.example.disaster_ar.dto.channel.ChannelMapUpdateRequest;
+import com.example.disaster_ar.dto.channel.ChannelMapResponse;
 
 import java.util.List;
 
@@ -71,5 +74,21 @@ public class ChannelController {
             @RequestBody JoinClassroomRequest req
     ) {
         return ResponseEntity.ok(channelService.joinRoom(req));
+    }
+
+    @GetMapping("/{schoolId}/maps")
+    public ResponseEntity<List<ChannelMapResponse>> getChannelMaps(
+            @PathVariable String schoolId
+    ) {
+        return ResponseEntity.ok(channelService.getChannelMaps(schoolId));
+    }
+
+    @PutMapping("/{schoolId}/maps/{mapId}")
+    public ResponseEntity<ChannelMapResponse> updateChannelMap(
+            @PathVariable String schoolId,
+            @PathVariable String mapId,
+            @RequestBody ChannelMapUpdateRequest req
+    ) {
+        return ResponseEntity.ok(channelService.updateChannelMap(schoolId, mapId, req));
     }
 }
