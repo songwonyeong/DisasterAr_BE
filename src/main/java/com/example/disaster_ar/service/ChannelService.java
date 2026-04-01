@@ -19,6 +19,17 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import com.example.disaster_ar.dto.channel.ChannelMapResponse;
 import com.example.disaster_ar.dto.channel.ChannelMapUpdateRequest;
+import com.example.disaster_ar.domain.v4.ChannelMapV4;
+import com.example.disaster_ar.domain.v4.SchoolV4;
+import com.example.disaster_ar.dto.channel.FloorplanAnalyzeResponse;
+import com.example.disaster_ar.dto.channel.PythonFloorplanAnalyzeResponse;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.MultipartBodyBuilder;
+import org.springframework.web.reactive.function.BodyInserters;
+import org.springframework.web.reactive.function.client.WebClient;
+
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -37,6 +48,13 @@ public class ChannelService {
     private final ClassroomRepository classroomRepository;
     private final StudentRepositoryV4 studentRepository;
     private final ChannelMapRepositoryV4 channelMapRepositoryV4;
+    private final WebClient webClient;
+
+    @Value("${file.upload.dir}")
+    private String fileUploadDir;
+
+    @Value("${floorplan.analyzer.base-url}")
+    private String analyzerBaseUrl;
 
     public SchoolV4 createChannel(String schoolName,
                                   List<MultipartFile> mapImages,
@@ -230,6 +248,59 @@ public class ChannelService {
                 .originY(saved.getOriginY())
                 .elementsJson(saved.getElementsJson())
                 .updatedAt(saved.getUpdatedAt())
+                .build();
+    }
+
+    public FloorplanAnalyzeResponse analyzeChannelMap(String schoolId, String mapId) {
+        SchoolV4 school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("학교가 존재하지 않습니다."));
+
+        ChannelMapV4 map = channelMapRepositoryV4.findById(mapId)
+                .orElseThrow(() -> new IllegalArgumentException("구조도 맵이 존재하지 않습니다."));
+
+        if (map.getSchool() == null || !map.getSchool().getId().equals(school.getId())) {
+            throw new IllegalArgumentException("해당 구조도는 이 학교 소속이 아닙니다.");
+        }
+
+        if (map.getUploadedImage() == null || map.getUploadedImage().isBlank()) {
+            throw new IllegalArgumentException("원본 구조도 이미지가 없습니다.");
+        }
+
+        // 예: /uploads/maps/abc.png -> abc.png
+        String uploadedImage = map.getUploadedImage();
+        String fileName = Paths.get(uploadedImage).getFileName().toString();
+
+        // 실제 파일 경로: uploads/maps/abc.png
+        Path filePath = Paths.get(fileUploadDir, fileName).toAbsolutePath().normalize();
+
+        FileSystemResource resource = new FileSystemResource(filePath.toFile());
+        if (!resource.exists()) {
+            throw new IllegalArgumentException("구조도 이미지 파일을 찾을 수 없습니다: " + filePath);
+        }
+
+        MultipartBodyBuilder builder = new MultipartBodyBuilder();
+        builder.part("image", resource)
+                .contentType(MediaType.APPLICATION_OCTET_STREAM);
+
+        PythonFloorplanAnalyzeResponse pythonResponse = webClient.post()
+                .uri(analyzerBaseUrl + "/analyze-floorplan")
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .body(BodyInserters.fromMultipartData(builder.build()))
+                .retrieve()
+                .bodyToMono(PythonFloorplanAnalyzeResponse.class)
+                .block();
+
+        if (pythonResponse == null) {
+            throw new IllegalStateException("구조도 분석 서버 응답이 비어 있습니다.");
+        }
+
+        return FloorplanAnalyzeResponse.builder()
+                .mapId(map.getId())
+                .floorIndex(map.getFloorIndex())
+                .floorLabel(map.getFloorLabel())
+                .uploadedImage(map.getUploadedImage())
+                .elements(pythonResponse.getElements())
+                .ocrAvailable(Boolean.TRUE.equals(pythonResponse.getOcr_available()))
                 .build();
     }
 }

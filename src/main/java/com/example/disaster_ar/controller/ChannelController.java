@@ -9,14 +9,14 @@ import com.example.disaster_ar.service.ChannelService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import com.example.disaster_ar.dto.channel.ChannelMapResponse;
 import com.example.disaster_ar.dto.channel.ChannelMapUpdateRequest;
-import com.example.disaster_ar.dto.channel.ChannelMapResponse;
+import com.example.disaster_ar.dto.channel.FloorplanAnalyzeResponse;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.util.List;
 
@@ -32,6 +32,17 @@ public class ChannelController {
     @Value("${file.upload.dir:uploads/maps}")
     private String uploadDir;
 
+//    // ✅ 1) 학교 채널 생성 - 이미지 여러 개 업로드 가능
+//    @Operation(summary = "학교 채널 생성(지도 이미지 여러 개 선택 가능)")
+//    @PostMapping(consumes = {MediaType.MULTIPART_FORM_DATA_VALUE})
+//    public ResponseEntity<SchoolV4> createChannel(
+//            @RequestPart("schoolName") String schoolName,
+//            @RequestPart(value = "mapImages", required = false) List<MultipartFile> mapImages
+//    ) {
+//        SchoolV4 created = channelService.createChannel(schoolName, mapImages, uploadDir);
+//        return ResponseEntity.ok(created);
+//    }
+
     // ✅ 1) 학교 채널 생성 - 이미지 여러 개 업로드 가능
     @Operation(summary = "학교 채널 생성(지도 이미지 여러 개 선택 가능)")
     @PostMapping(consumes = {MediaType.MULTIPART_FORM_DATA_VALUE})
@@ -39,6 +50,23 @@ public class ChannelController {
             @RequestPart("schoolName") String schoolName,
             @RequestPart(value = "mapImages", required = false) List<MultipartFile> mapImages
     ) {
+        System.out.println("===== createChannel called =====");
+        System.out.println("schoolName = " + schoolName);
+        System.out.println("mapImages is null? " + (mapImages == null));
+        System.out.println("mapImages size = " + (mapImages == null ? "null" : mapImages.size()));
+
+        if (mapImages != null) {
+            for (int i = 0; i < mapImages.size(); i++) {
+                MultipartFile f = mapImages.get(i);
+                System.out.println(
+                        "file[" + i + "] originalFilename=" + f.getOriginalFilename()
+                                + ", empty=" + f.isEmpty()
+                                + ", size=" + f.getSize()
+                                + ", contentType=" + f.getContentType()
+                );
+            }
+        }
+
         SchoolV4 created = channelService.createChannel(schoolName, mapImages, uploadDir);
         return ResponseEntity.ok(created);
     }
@@ -90,5 +118,15 @@ public class ChannelController {
             @RequestBody ChannelMapUpdateRequest req
     ) {
         return ResponseEntity.ok(channelService.updateChannelMap(schoolId, mapId, req));
+    }
+
+    @PostMapping("/{schoolId}/maps/{mapId}/analyze")
+    public ResponseEntity<FloorplanAnalyzeResponse> analyzeChannelMap(
+            @PathVariable String schoolId,
+            @PathVariable String mapId
+    ) {
+        return ResponseEntity.ok(
+                channelService.analyzeChannelMap(schoolId, mapId)
+        );
     }
 }

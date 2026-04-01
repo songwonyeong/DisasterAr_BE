@@ -51,6 +51,7 @@ dependencies {
 	implementation 'org.springframework.security:spring-security-crypto:6.4.4'
 
 	implementation 'org.hibernate.validator:hibernate-validator:8.0.1.Final'
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
 
 
 }
