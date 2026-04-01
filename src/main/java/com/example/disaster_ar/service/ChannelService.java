@@ -17,10 +17,7 @@ import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
-import com.example.disaster_ar.dto.channel.ChannelMapResponse;
 import com.example.disaster_ar.dto.channel.ChannelMapUpdateRequest;
-import com.example.disaster_ar.domain.v4.ChannelMapV4;
-import com.example.disaster_ar.domain.v4.SchoolV4;
 import com.example.disaster_ar.dto.channel.FloorplanAnalyzeResponse;
 import com.example.disaster_ar.dto.channel.PythonFloorplanAnalyzeResponse;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,7 +26,6 @@ import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
-
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -301,6 +297,107 @@ public class ChannelService {
                 .uploadedImage(map.getUploadedImage())
                 .elements(pythonResponse.getElements())
                 .ocrAvailable(Boolean.TRUE.equals(pythonResponse.getOcr_available()))
+                .build();
+    }
+
+    public ChannelMapResponse addChannelMap(
+            String schoolId,
+            MultipartFile image,
+            Integer floorIndex,
+            String floorLabel
+    ) {
+        SchoolV4 school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("학교가 존재하지 않습니다."));
+
+        if (image == null || image.isEmpty()) {
+            throw new IllegalArgumentException("업로드할 이미지가 없습니다.");
+        }
+
+        try {
+            Path uploadDir = Paths.get(fileUploadDir).toAbsolutePath().normalize();
+            Files.createDirectories(uploadDir);
+
+            String originalName = image.getOriginalFilename();
+            String fileName = school.getId() + "_" + UUID.randomUUID() + "_" + originalName;
+            Path targetPath = uploadDir.resolve(fileName);
+
+            image.transferTo(targetPath.toFile());
+
+            String uploadedImage = "/uploads/maps/" + fileName;
+
+            ChannelMapV4 map = ChannelMapV4.builder()
+                    .id(UUID.randomUUID().toString())
+                    .school(school)
+                    .floorIndex(floorIndex != null ? floorIndex : 0)
+                    .floorLabel(floorLabel)
+                    .uploadedImage(uploadedImage)
+                    .outlineJson(null)
+                    .scaleMPerPx(null)
+                    .originX(null)
+                    .originY(null)
+                    .elementsJson("[]")
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+
+            ChannelMapV4 saved = channelMapRepositoryV4.save(map);
+            return toChannelMapResponse(saved);
+
+        } catch (IOException e) {
+            throw new RuntimeException("구조도 이미지 저장 실패", e);
+        }
+    }
+
+    public ChannelMapResponse getChannelMap(String schoolId, String mapId) {
+        SchoolV4 school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("학교가 존재하지 않습니다."));
+
+        ChannelMapV4 map = channelMapRepositoryV4.findById(mapId)
+                .orElseThrow(() -> new IllegalArgumentException("구조도 맵이 존재하지 않습니다."));
+
+        if (map.getSchool() == null || !map.getSchool().getId().equals(school.getId())) {
+            throw new IllegalArgumentException("해당 구조도는 이 학교 소속이 아닙니다.");
+        }
+
+        return toChannelMapResponse(map);
+    }
+
+    public void deleteChannelMap(String schoolId, String mapId) {
+        SchoolV4 school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("학교가 존재하지 않습니다."));
+
+        ChannelMapV4 map = channelMapRepositoryV4.findById(mapId)
+                .orElseThrow(() -> new IllegalArgumentException("구조도 맵이 존재하지 않습니다."));
+
+        if (map.getSchool() == null || !map.getSchool().getId().equals(school.getId())) {
+            throw new IllegalArgumentException("해당 구조도는 이 학교 소속이 아닙니다.");
+        }
+
+        // 실제 파일 삭제
+        if (map.getUploadedImage() != null && !map.getUploadedImage().isBlank()) {
+            try {
+                String fileName = Paths.get(map.getUploadedImage()).getFileName().toString();
+                Path filePath = Paths.get(fileUploadDir, fileName).toAbsolutePath().normalize();
+                Files.deleteIfExists(filePath);
+            } catch (IOException e) {
+                throw new RuntimeException("구조도 이미지 파일 삭제 실패", e);
+            }
+        }
+
+        channelMapRepositoryV4.delete(map);
+    }
+
+    private ChannelMapResponse toChannelMapResponse(ChannelMapV4 map) {
+        return ChannelMapResponse.builder()
+                .mapId(map.getId())
+                .floorIndex(map.getFloorIndex())
+                .floorLabel(map.getFloorLabel())
+                .uploadedImage(map.getUploadedImage())
+                .outlineJson(map.getOutlineJson())
+                .scaleMPerPx(map.getScaleMPerPx())
+                .originX(map.getOriginX())
+                .originY(map.getOriginY())
+                .elementsJson(map.getElementsJson())
+                .updatedAt(map.getUpdatedAt())
                 .build();
     }
 }

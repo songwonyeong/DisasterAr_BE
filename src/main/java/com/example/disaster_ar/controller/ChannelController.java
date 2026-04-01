@@ -129,4 +129,35 @@ public class ChannelController {
                 channelService.analyzeChannelMap(schoolId, mapId)
         );
     }
+
+    @PostMapping(value = "/{schoolId}/maps", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ChannelMapResponse> addChannelMap(
+            @PathVariable String schoolId,
+            @RequestPart("image") MultipartFile image,
+            @RequestPart(value = "floorIndex", required = false) Integer floorIndex,
+            @RequestPart(value = "floorLabel", required = false) String floorLabel
+    ) {
+        return ResponseEntity.ok(
+                channelService.addChannelMap(schoolId, image, floorIndex, floorLabel)
+        );
+    }
+
+    @GetMapping("/{schoolId}/maps/{mapId}")
+    public ResponseEntity<ChannelMapResponse> getChannelMap(
+            @PathVariable String schoolId,
+            @PathVariable String mapId
+    ) {
+        return ResponseEntity.ok(
+                channelService.getChannelMap(schoolId, mapId)
+        );
+    }
+
+    @DeleteMapping("/{schoolId}/maps/{mapId}")
+    public ResponseEntity<Void> deleteChannelMap(
+            @PathVariable String schoolId,
+            @PathVariable String mapId
+    ) {
+        channelService.deleteChannelMap(schoolId, mapId);
+        return ResponseEntity.ok().build();
+    }
 }
