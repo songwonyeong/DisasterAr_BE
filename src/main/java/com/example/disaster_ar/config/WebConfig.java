@@ -11,17 +11,9 @@ import java.nio.file.Paths;
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
-    @Value("${file.upload.dir:uploads/maps}")
-    private String uploadDir;
-
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        Path uploadPath = Paths.get(uploadDir).toAbsolutePath().normalize();
-
-        System.out.println("WebConfig uploadDir raw = " + uploadDir);
-        System.out.println("WebConfig uploadDir absolute = " + uploadPath);
-
         registry.addResourceHandler("/uploads/maps/**")
-                .addResourceLocations("file:" + uploadPath.toString() + "/");
+                .addResourceLocations("file:/app/uploads/maps/");
     }
 }
