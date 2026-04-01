@@ -56,6 +56,10 @@ public class ChannelService {
                                   List<MultipartFile> mapImages,
                                   String uploadDir) {
 
+        System.out.println("===== createChannel start =====");
+        System.out.println("schoolName = " + schoolName);
+        System.out.println("uploadDir(raw) = " + uploadDir);
+
         SchoolV4 school = schoolRepository.findBySchoolName(schoolName)
                 .orElseGet(() -> {
                     SchoolV4 s = new SchoolV4();
@@ -69,10 +73,17 @@ public class ChannelService {
             school = schoolRepository.save(school);
         }
 
+        System.out.println("school.id = " + school.getId());
+        System.out.println("mapImages null? " + (mapImages == null));
+        System.out.println("mapImages size = " + (mapImages == null ? "null" : mapImages.size()));
+
         if (mapImages != null && !mapImages.isEmpty()) {
             Path dir = Paths.get(uploadDir).toAbsolutePath().normalize();
+            System.out.println("uploadDir(absolute) = " + dir);
+
             try {
                 Files.createDirectories(dir);
+                System.out.println("dir exists after createDirectories = " + Files.exists(dir));
             } catch (IOException e) {
                 throw new RuntimeException("지도 업로드 폴더 생성 실패", e);
             }
@@ -81,20 +92,32 @@ public class ChannelService {
             List<String> storedPaths = new ArrayList<>();
 
             for (MultipartFile mapImage : mapImages) {
-                if (mapImage == null || mapImage.isEmpty()) continue;
+                if (mapImage == null || mapImage.isEmpty()) {
+                    System.out.println("skip empty file");
+                    continue;
+                }
+
+                System.out.println("originalFilename = " + mapImage.getOriginalFilename());
+                System.out.println("contentType = " + mapImage.getContentType());
+                System.out.println("size = " + mapImage.getSize());
 
                 String filename = school.getId() + "_" + UUID.randomUUID()
                         + "_" + mapImage.getOriginalFilename();
                 Path target = dir.resolve(filename);
 
+                System.out.println("target path = " + target.toAbsolutePath());
+
                 try {
                     mapImage.transferTo(target.toFile());
+                    System.out.println("saved file ok");
+                    System.out.println("file exists after save = " + Files.exists(target));
                 } catch (IOException e) {
                     throw new RuntimeException("지도 파일 저장 실패: " + filename, e);
                 }
 
                 String webPath = "/uploads/maps/" + filename;
                 storedPaths.add(webPath);
+                System.out.println("webPath = " + webPath);
 
                 ChannelMapV4 cm = new ChannelMapV4();
                 if (cm.getId() == null) cm.setId(UUID.randomUUID().toString());
@@ -110,16 +133,22 @@ public class ChannelService {
                 cm.setElementsJson("[]");
                 cm.setUpdatedAt(LocalDateTime.now());
 
-                channelMapRepositoryV4.save(cm);
+                ChannelMapV4 saved = channelMapRepositoryV4.save(cm);
+                System.out.println("saved channelMap id = " + saved.getId());
+
                 floorIndex++;
             }
+
+            System.out.println("storedPaths size = " + storedPaths.size());
 
             if (!storedPaths.isEmpty()) {
                 school.setThumbnailImage(storedPaths.get(0));
                 schoolRepository.save(school);
+                System.out.println("thumbnailImage saved = " + storedPaths.get(0));
             }
         }
 
+        System.out.println("===== createChannel end =====");
         return school;
     }
 
