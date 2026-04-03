@@ -85,6 +85,14 @@ public class RoomController {
         return ResponseEntity.ok(res);
     }
 
+    @PostMapping("/{classroomId}/training/start")
+    public ResponseEntity<TrainingControlResponse> startTraining(
+            @PathVariable String classroomId,
+            @RequestBody TrainingStartRequest req
+    ) {
+        return ResponseEntity.ok(roomService.startTraining(classroomId, req));
+    }
+
     @GetMapping("/{classroomId}/training-status")
     public ResponseEntity<TrainingStatusResponse> getTrainingStatus(
             @PathVariable String classroomId,
