@@ -12,7 +12,7 @@ import com.example.disaster_ar.dto.room.StudentKickResponse;
 import com.example.disaster_ar.dto.room.ActiveMapResponse;
 import com.example.disaster_ar.dto.room.ActiveMapUpdateRequest;
 import com.example.disaster_ar.dto.room.GameStartContextResponse;
-
+import com.example.disaster_ar.dto.room.ActiveAssignmentResponse;
 import java.util.List;
 
 @Tag(name = "Room")
@@ -181,5 +181,38 @@ public class RoomController {
             @RequestBody RoomMapVersionUpdateRequest req
     ) {
         return ResponseEntity.ok(roomService.updateMapVersion(classroomId, mapVersionId, req));
+    }
+
+    @PostMapping("/{classroomId}/map-versions/from-channel")
+    public ResponseEntity<RoomMapVersionResponse> createMapVersionFromChannel(
+            @PathVariable String classroomId,
+            @RequestBody FromChannelRequest req
+    ) {
+        return ResponseEntity.ok(roomService.createMapVersionFromChannel(classroomId, req));
+    }
+
+    @PostMapping("/{classroomId}/map-versions/from-template")
+    public ResponseEntity<RoomMapVersionResponse> createMapVersionFromTemplate(
+            @PathVariable String classroomId,
+            @RequestBody FromTemplateRequest req
+    ) {
+        return ResponseEntity.ok(roomService.createMapVersionFromTemplate(classroomId, req));
+    }
+
+    @PostMapping("/{classroomId}/map-versions/{mapVersionId}/save-as-template")
+    public ResponseEntity<String> saveMapVersionAsTemplate(
+            @PathVariable String classroomId,
+            @PathVariable String mapVersionId,
+            @RequestBody SaveTemplateRequest req
+    ) {
+        return ResponseEntity.ok(roomService.saveMapVersionAsTemplate(classroomId, mapVersionId, req));
+    }
+
+    @GetMapping("/{classroomId}/students/{studentId}/active-assignments")
+    public ResponseEntity<List<ActiveAssignmentResponse>> getActiveAssignments(
+            @PathVariable String classroomId,
+            @PathVariable String studentId
+    ) {
+        return ResponseEntity.ok(roomService.getActiveAssignments(classroomId, studentId));
     }
 }

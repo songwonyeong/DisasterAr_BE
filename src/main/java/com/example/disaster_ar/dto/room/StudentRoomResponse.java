@@ -19,4 +19,11 @@ public class StudentRoomResponse {
     private LocalDateTime joinedAt;
     private String status;
     private Boolean isKicked;
+
+    private Integer floorIndex;
+    private Double x;
+    private Double y;
+    private String beaconId;
+    private Integer lastRssi;
+    private String lastSeenAt;
 }

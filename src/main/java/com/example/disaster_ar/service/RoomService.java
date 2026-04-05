@@ -1,18 +1,29 @@
 package com.example.disaster_ar.service;
 
+import com.example.disaster_ar.domain.v4.ChannelMapV4;
 import com.example.disaster_ar.domain.v4.ClassroomV4;
+import com.example.disaster_ar.domain.v4.RoomMapVersionV4;
+import com.example.disaster_ar.domain.v4.ScenarioV4;
+import com.example.disaster_ar.domain.v4.SchoolMapTemplateV4;
 import com.example.disaster_ar.domain.v4.SchoolV4;
-import com.example.disaster_ar.domain.v4.UserV4;
 import com.example.disaster_ar.domain.v4.StudentV4;
+import com.example.disaster_ar.domain.v4.UserV4;
 import com.example.disaster_ar.domain.v4.enums.TrainingState;
 import com.example.disaster_ar.dto.room.*;
 import com.example.disaster_ar.repository.*;
-import com.example.disaster_ar.domain.v4.RoomMapVersionV4;
-import com.example.disaster_ar.domain.v4.ScenarioV4;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.example.disaster_ar.domain.v4.BeaconV4;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import com.example.disaster_ar.domain.v4.ScenarioAssignmentV4;
+import com.example.disaster_ar.domain.v4.ScenarioTriggerV4;
+import com.example.disaster_ar.domain.v4.enums.TriggerReason;
+
+import java.util.Map;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
 
@@ -26,6 +37,12 @@ public class RoomService {
     private final StudentRepositoryV4 studentRepository;
     private final ScenarioRepository scenarioRepository;
     private final RoomMapVersionRepositoryV4 roomMapVersionRepositoryV4;
+    private final ChannelMapRepositoryV4 channelMapRepositoryV4;
+    private final SchoolMapTemplateRepositoryV4 schoolMapTemplateRepositoryV4;
+    private final ObjectMapper objectMapper;
+    private final ScenarioAssignmentRepositoryV4 scenarioAssignmentRepositoryV4;
+    private final ScenarioTriggerRepositoryV4 scenarioTriggerRepositoryV4;
+    private final ScenarioTeamMemberRepositoryV4 scenarioTeamMemberRepositoryV4;
 
     public RoomResponse createRoom(RoomCreateRequest req) {
 
@@ -39,11 +56,11 @@ public class RoomService {
         if (c.getId() == null) c.setId(UUID.randomUUID().toString());
 
         c.setSchool(school);
-        c.setOwner(owner); // ✅ 수정
+        c.setOwner(owner);
         c.setClassName(req.getClassName());
         c.setStudentCount(0);
         c.setJoinCode(generateJoinCode());
-        c.setActiveMapVersion(null); // ✅ 수정
+        c.setActiveMapVersion(null);
         c.setCreatedAt(LocalDateTime.now());
         c.setUpdatedAt(LocalDateTime.now());
         c.setTrainingState(TrainingState.WAITING);
@@ -68,7 +85,7 @@ public class RoomService {
         ClassroomV4 c = classroomRepository.findById(req.getClassroomId())
                 .orElseThrow(() -> new IllegalArgumentException("방이 존재하지 않습니다."));
 
-        if (c.getOwner() == null || !c.getOwner().getId().equals(req.getUserId())) { // ✅ 수정
+        if (c.getOwner() == null || !c.getOwner().getId().equals(req.getUserId())) {
             throw new IllegalArgumentException("이 방을 수정할 권한이 없습니다.");
         }
 
@@ -84,7 +101,7 @@ public class RoomService {
         ClassroomV4 c = classroomRepository.findById(classroomId)
                 .orElseThrow(() -> new IllegalArgumentException("방이 존재하지 않습니다."));
 
-        if (c.getOwner() == null || !c.getOwner().getId().equals(userId)) { // ✅ 수정
+        if (c.getOwner() == null || !c.getOwner().getId().equals(userId)) {
             throw new IllegalArgumentException("이 방을 삭제할 권한이 없습니다.");
         }
 
@@ -95,7 +112,7 @@ public class RoomService {
         ClassroomV4 c = classroomRepository.findById(classroomId)
                 .orElseThrow(() -> new IllegalArgumentException("방이 존재하지 않습니다."));
 
-        if (c.getOwner() == null || !c.getOwner().getId().equals(userId)) { // ✅ 수정
+        if (c.getOwner() == null || !c.getOwner().getId().equals(userId)) {
             throw new IllegalArgumentException("이 방의 코드를 재발급할 권한이 없습니다.");
         }
 
@@ -115,6 +132,7 @@ public class RoomService {
                 .trainingState(c.getTrainingState() != null ? c.getTrainingState().name() : null)
                 .build();
     }
+
     private String generateJoinCode() {
         return UUID.randomUUID().toString().substring(0, 6).toUpperCase();
     }
@@ -188,6 +206,8 @@ public class RoomService {
 
         ClassroomV4 saved = classroomRepository.save(classroom);
 
+        createOnStartTriggers(saved, scenario);
+
         return TrainingControlResponse.builder()
                 .classroomId(saved.getId())
                 .trainingState(saved.getTrainingState() != null ? saved.getTrainingState().name() : null)
@@ -222,13 +242,30 @@ public class RoomService {
 
         return studentRepository.findByClassroom_IdOrderByJoinedAtAsc(classroom.getId())
                 .stream()
-                .map(student -> StudentRoomResponse.builder()
-                        .studentId(student.getId())
-                        .studentName(student.getStudentName())
-                        .joinedAt(student.getJoinedAt())
-                        .status(student.getStatus() != null ? student.getStatus().name() : null)
-                        .isKicked(Boolean.TRUE.equals(student.getIsKicked()))
-                        .build())
+                .map(student -> {
+
+                    BeaconV4 beacon = student.getLastBeacon(); // ⭐ 반드시 여기 있어야 함
+
+                    return StudentRoomResponse.builder()
+                            .studentId(student.getId())
+                            .studentName(student.getStudentName())
+                            .joinedAt(student.getJoinedAt())
+                            .status(student.getStatus() != null ? student.getStatus().name() : null)
+                            .isKicked(Boolean.TRUE.equals(student.getIsKicked()))
+
+                            .floorIndex(beacon != null ? beacon.getFloorIndex() : null)
+                            .x(beacon != null ? beacon.getX() : null)
+                            .y(beacon != null ? beacon.getY() : null)
+                            .beaconId(beacon != null ? beacon.getId() : null)
+                            .lastRssi(student.getLastBeaconRssi())
+                            .lastSeenAt(
+                                    student.getLastBeaconSeenAt() != null
+                                            ? student.getLastBeaconSeenAt().toString()
+                                            : null
+                            )
+
+                            .build();
+                })
                 .toList();
     }
 
@@ -260,6 +297,8 @@ public class RoomService {
     ) {
         ClassroomV4 classroom = classroomRepository.findById(classroomId)
                 .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
+
+        validateNotRunning(classroom);
 
         SchoolV4 school = schoolRepository.findById(req.getSchoolId())
                 .orElseThrow(() -> new IllegalArgumentException("학교가 존재하지 않습니다."));
@@ -293,6 +332,8 @@ public class RoomService {
     public ActiveMapResponse updateActiveMap(String classroomId, ActiveMapUpdateRequest req) {
         ClassroomV4 classroom = classroomRepository.findById(classroomId)
                 .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
+
+        validateNotRunning(classroom);
 
         RoomMapVersionV4 mapVersion = roomMapVersionRepositoryV4.findById(req.getMapVersionId())
                 .orElseThrow(() -> new IllegalArgumentException("구조도 버전이 존재하지 않습니다."));
@@ -350,7 +391,7 @@ public class RoomService {
                 .build();
     }
 
-    public java.util.List<RoomMapVersionSummaryResponse> getMapVersions(String classroomId) {
+    public List<RoomMapVersionSummaryResponse> getMapVersions(String classroomId) {
         ClassroomV4 classroom = classroomRepository.findById(classroomId)
                 .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
 
@@ -405,6 +446,8 @@ public class RoomService {
         ClassroomV4 classroom = classroomRepository.findById(classroomId)
                 .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
 
+        validateNotRunning(classroom);
+
         RoomMapVersionV4 v = roomMapVersionRepositoryV4.findById(mapVersionId)
                 .orElseThrow(() -> new IllegalArgumentException("구조도 버전이 존재하지 않습니다."));
 
@@ -430,5 +473,344 @@ public class RoomService {
                 .createdAt(saved.getCreatedAt())
                 .isActive(isActive)
                 .build();
+    }
+
+    @Transactional
+    public RoomMapVersionResponse createMapVersionFromChannel(
+            String classroomId,
+            FromChannelRequest req
+    ) {
+        ClassroomV4 classroom = classroomRepository.findById(classroomId)
+                .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
+
+        validateNotRunning(classroom);
+
+        ChannelMapV4 channelMap = channelMapRepositoryV4.findById(req.getChannelMapId())
+                .orElseThrow(() -> new IllegalArgumentException("채널 구조도가 존재하지 않습니다."));
+
+        if (classroom.getSchool() == null || channelMap.getSchool() == null ||
+                !classroom.getSchool().getId().equals(channelMap.getSchool().getId())) {
+            throw new IllegalArgumentException("교실과 채널 구조도의 학교가 일치하지 않습니다.");
+        }
+
+        UserV4 user = null;
+        if (req.getCreatedBy() != null && !req.getCreatedBy().isBlank()) {
+            user = userRepository.findById(req.getCreatedBy())
+                    .orElseThrow(() -> new IllegalArgumentException("사용자 없음"));
+        }
+
+        RoomMapVersionV4 mapVersion = RoomMapVersionV4.builder()
+                .id(UUID.randomUUID().toString())
+                .classroom(classroom)
+                .school(classroom.getSchool())
+                .label(req.getLabel() != null && !req.getLabel().isBlank() ? req.getLabel() : "채널 구조도 기반 버전")
+                .createdBy(user)
+                .createdAt(LocalDateTime.now())
+                .floorsJson(buildFloorsJsonFromChannelMap(channelMap))
+                .build();
+
+        roomMapVersionRepositoryV4.save(mapVersion);
+
+        return RoomMapVersionResponse.builder()
+                .mapVersionId(mapVersion.getId())
+                .classroomId(classroom.getId())
+                .label(mapVersion.getLabel())
+                .createdAt(mapVersion.getCreatedAt())
+                .build();
+    }
+
+    @Transactional
+    public RoomMapVersionResponse createMapVersionFromTemplate(
+            String classroomId,
+            FromTemplateRequest req
+    ) {
+        ClassroomV4 classroom = classroomRepository.findById(classroomId)
+                .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
+
+        validateNotRunning(classroom);
+
+        SchoolMapTemplateV4 template = schoolMapTemplateRepositoryV4.findById(req.getTemplateId())
+                .orElseThrow(() -> new IllegalArgumentException("템플릿이 존재하지 않습니다."));
+
+        if (classroom.getSchool() == null || template.getSchool() == null ||
+                !classroom.getSchool().getId().equals(template.getSchool().getId())) {
+            throw new IllegalArgumentException("교실과 템플릿의 학교가 일치하지 않습니다.");
+        }
+
+        UserV4 user = null;
+        if (req.getCreatedBy() != null && !req.getCreatedBy().isBlank()) {
+            user = userRepository.findById(req.getCreatedBy())
+                    .orElseThrow(() -> new IllegalArgumentException("사용자 없음"));
+        }
+
+        RoomMapVersionV4 mapVersion = RoomMapVersionV4.builder()
+                .id(UUID.randomUUID().toString())
+                .classroom(classroom)
+                .school(classroom.getSchool())
+                .sourceTemplate(template)
+                .label(req.getLabel() != null && !req.getLabel().isBlank() ? req.getLabel() : template.getTemplateName())
+                .createdBy(user)
+                .createdAt(LocalDateTime.now())
+                .floorsJson(deepCopyJson(template.getFloorsJson()))
+                .build();
+
+        roomMapVersionRepositoryV4.save(mapVersion);
+
+        return RoomMapVersionResponse.builder()
+                .mapVersionId(mapVersion.getId())
+                .classroomId(classroom.getId())
+                .label(mapVersion.getLabel())
+                .createdAt(mapVersion.getCreatedAt())
+                .build();
+    }
+
+    @Transactional
+    public String saveMapVersionAsTemplate(
+            String classroomId,
+            String mapVersionId,
+            SaveTemplateRequest req
+    ) {
+        ClassroomV4 classroom = classroomRepository.findById(classroomId)
+                .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
+
+        RoomMapVersionV4 mapVersion = roomMapVersionRepositoryV4.findById(mapVersionId)
+                .orElseThrow(() -> new IllegalArgumentException("구조도 버전이 존재하지 않습니다."));
+
+        if (mapVersion.getClassroom() == null ||
+                !mapVersion.getClassroom().getId().equals(classroom.getId())) {
+            throw new IllegalArgumentException("해당 구조도 버전은 이 교실 소속이 아닙니다.");
+        }
+
+        UserV4 user = null;
+        if (req.getCreatedBy() != null && !req.getCreatedBy().isBlank()) {
+            user = userRepository.findById(req.getCreatedBy())
+                    .orElseThrow(() -> new IllegalArgumentException("사용자 없음"));
+        }
+
+        String templateName = req.getTemplateName();
+        if (templateName == null || templateName.isBlank()) {
+            throw new IllegalArgumentException("templateName은 필수입니다.");
+        }
+
+        SchoolMapTemplateV4 template = SchoolMapTemplateV4.builder()
+                .id(UUID.randomUUID().toString())
+                .school(classroom.getSchool())
+                .templateName(templateName)
+                .description(req.getDescription())
+                .createdBy(user)
+                .floorsJson(deepCopyJson(mapVersion.getFloorsJson()))
+                .build();
+
+        schoolMapTemplateRepositoryV4.save(template);
+        return template.getId();
+    }
+
+    private void validateNotRunning(ClassroomV4 classroom) {
+        if (classroom.getTrainingState() == TrainingState.RUNNING) {
+            throw new IllegalStateException("훈련 중에는 구조도를 변경할 수 없습니다.");
+        }
+    }
+
+    private String deepCopyJson(String json) {
+        try {
+            Object value = objectMapper.readValue(json, Object.class);
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("JSON 처리 실패", e);
+        }
+    }
+
+    private String buildFloorsJsonFromChannelMap(ChannelMapV4 channelMap) {
+        try {
+            Map<String, Object> floor = new LinkedHashMap<>();
+            floor.put("floorIndex", channelMap.getFloorIndex());
+            floor.put("floorLabel", channelMap.getFloorLabel());
+            floor.put("imageUrl", channelMap.getUploadedImage());
+            floor.put("scaleMPerPx", channelMap.getScaleMPerPx());
+            floor.put("originX", channelMap.getOriginX());
+            floor.put("originY", channelMap.getOriginY());
+
+            Object elements = (channelMap.getElementsJson() == null || channelMap.getElementsJson().isBlank())
+                    ? java.util.Collections.emptyList()
+                    : objectMapper.readValue(channelMap.getElementsJson(), Object.class);
+
+            floor.put("elements", elements);
+
+            Map<String, Object> root = new LinkedHashMap<>();
+            root.put("floors", List.of(floor));
+
+            return objectMapper.writeValueAsString(root);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("채널 구조도를 floorsJson으로 변환하는 데 실패했습니다.", e);
+        }
+    }
+
+    @Transactional
+    protected void createOnStartTriggers(ClassroomV4 classroom, ScenarioV4 scenario) {
+        List<ScenarioAssignmentV4> assignments =
+                scenarioAssignmentRepositoryV4.findByScenario_IdOrderByCreatedAtAsc(scenario.getId());
+
+        if (assignments == null || assignments.isEmpty()) {
+            return;
+        }
+
+        List<StudentV4> students = studentRepository.findByClassroom_IdOrderByJoinedAtAsc(classroom.getId());
+        if (students == null || students.isEmpty()) {
+            return;
+        }
+
+        for (ScenarioAssignmentV4 assignment : assignments) {
+            if (!isOnStartAssignment(assignment)) {
+                continue;
+            }
+
+            String targetType = assignment.getTargetType() != null
+                    ? assignment.getTargetType().name()
+                    : "ALL";
+
+            if ("TEAM".equals(targetType)) {
+                // 팀 대상은 일단 targetTeam 있는 경우에만 처리
+                if (assignment.getTargetTeam() == null) {
+                    continue;
+                }
+
+                for (StudentV4 student : students) {
+                    boolean matched = scenarioTeamMemberMatchesStudent(
+                            scenario.getId(),
+                            assignment.getTargetTeam().getId(),
+                            student.getId()
+                    );
+
+                    if (matched) {
+                        createTriggerIfAbsent(scenario, assignment, student);
+                    }
+                }
+            } else {
+                // ALL, STUDENT, 기타는 우선 학생 전체 대상으로 처리
+                for (StudentV4 student : students) {
+                    createTriggerIfAbsent(scenario, assignment, student);
+                }
+            }
+        }
+    }
+
+    private boolean isOnStartAssignment(ScenarioAssignmentV4 assignment) {
+        if (assignment.getParamsJson() == null || assignment.getParamsJson().isBlank()) {
+            return false;
+        }
+
+        try {
+            Map<?, ?> map = objectMapper.readValue(assignment.getParamsJson(), Map.class);
+            Object activationType = map.get("activationType");
+            return activationType != null && "ON_START".equals(String.valueOf(activationType));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void createTriggerIfAbsent(
+            ScenarioV4 scenario,
+            ScenarioAssignmentV4 assignment,
+            StudentV4 student
+    ) {
+        boolean exists = scenarioTriggerRepositoryV4
+                .findByScenario_IdAndStudent_IdAndAssignment_Id(
+                        scenario.getId(),
+                        student.getId(),
+                        assignment.getId()
+                )
+                .isPresent();
+
+        if (exists) {
+            return;
+        }
+
+        ScenarioTriggerV4 trigger = ScenarioTriggerV4.builder()
+                .id(UUID.randomUUID().toString())
+                .scenario(scenario)
+                .assignment(assignment)
+                .student(student)
+                .triggerReason(TriggerReason.SYSTEM)
+                .triggeredAt(LocalDateTime.now())
+                .status("TRIGGERED")
+                .payloadJson(buildOnStartPayload(assignment))
+                .build();
+
+        scenarioTriggerRepositoryV4.save(trigger);
+    }
+
+    private String buildOnStartPayload(ScenarioAssignmentV4 assignment) {
+        try {
+            return objectMapper.writeValueAsString(
+                    Map.of(
+                            "activationType", "ON_START",
+                            "assignmentId", assignment.getId()
+                    )
+            );
+        } catch (Exception e) {
+            return "{}";
+        }
+    }
+
+    private boolean scenarioTeamMemberMatchesStudent(String scenarioId, String teamId, String studentId) {
+        return scenarioTeamMemberRepositoryV4
+                .findByScenario_IdAndTeam_IdAndStudent_Id(scenarioId, teamId, studentId)
+                .isPresent();
+    }
+
+    public List<ActiveAssignmentResponse> getActiveAssignments(String classroomId, String studentId) {
+        ClassroomV4 classroom = classroomRepository.findById(classroomId)
+                .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
+
+        StudentV4 student = studentRepository.findById(studentId)
+                .orElseThrow(() -> new IllegalArgumentException("학생이 존재하지 않습니다."));
+
+        if (student.getClassroom() == null || !student.getClassroom().getId().equals(classroom.getId())) {
+            throw new IllegalArgumentException("해당 학생은 이 교실 소속이 아닙니다.");
+        }
+
+        ScenarioV4 scenario = classroom.getActiveScenario();
+        if (scenario == null) {
+            return List.of();
+        }
+
+        return scenarioTriggerRepositoryV4
+                .findByScenario_IdAndStudent_IdOrderByTriggeredAtDesc(scenario.getId(), student.getId())
+                .stream()
+                .map(trigger -> {
+                    ScenarioAssignmentV4 assignment = trigger.getAssignment();
+
+                    // content 연관관계가 있다면 사용
+                    String contentId = null;
+                    String title = null;
+                    String description = null;
+
+                    if (assignment.getContent() != null) {
+                        contentId = assignment.getContent().getId();
+                        title = assignment.getContent().getTitle();
+                        description = assignment.getContent().getDescription();
+                    }
+
+                    return ActiveAssignmentResponse.builder()
+                            .triggerId(trigger.getId())
+                            .assignmentId(assignment != null ? assignment.getId() : null)
+                            .assignmentType(
+                                    assignment != null && assignment.getAssignmentType() != null
+                                            ? assignment.getAssignmentType().name()
+                                            : null
+                            )
+                            .contentId(contentId)
+                            .title(title)
+                            .description(description)
+                            .floorIndex(assignment != null ? assignment.getFloorIndex() : null)
+                            .beaconId(
+                                    assignment != null && assignment.getBeacon() != null
+                                            ? assignment.getBeacon().getId()
+                                            : null
+                            )
+                            .triggeredAt(trigger.getTriggeredAt())
+                            .build();
+                })
+                .toList();
     }
 }
