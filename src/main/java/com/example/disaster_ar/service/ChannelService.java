@@ -101,9 +101,17 @@ public class ChannelService {
                 System.out.println("contentType = " + mapImage.getContentType());
                 System.out.println("size = " + mapImage.getSize());
 
+                String originalFilename = mapImage.getOriginalFilename();
+                if (originalFilename == null || originalFilename.isBlank()) {
+                    originalFilename = "image.png";
+                }
+
+                String safeOriginalFilename = originalFilename.replaceAll("[^a-zA-Z0-9._-]", "_");
+
                 String filename = school.getId() + "_" + UUID.randomUUID()
-                        + "_" + mapImage.getOriginalFilename();
-                Path target = dir.resolve(filename);
+                        + "_" + safeOriginalFilename;
+
+                Path target = dir.resolve(filename).normalize();
 
                 System.out.println("target path = " + target.toAbsolutePath());
 
