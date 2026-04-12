@@ -9,6 +9,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import com.example.disaster_ar.dto.scenario.TriggeredAssignmentResponse;
+import com.example.disaster_ar.dto.scenario.SimulateBeaconDetectRequest;
+import com.example.disaster_ar.dto.scenario.SimulateBeaconDetectResponse;
+import com.example.disaster_ar.service.ScenarioAdminService;
 
 import java.util.List;
 
@@ -19,6 +22,7 @@ import java.util.List;
 public class ScenarioController {
 
     private final ScenarioService scenarioService;
+    private final ScenarioAdminService scenarioAdminService;
 
     // ✅ 시나리오 생성
     @Operation(summary = "시나리오 생성")
@@ -68,12 +72,15 @@ public class ScenarioController {
         return ResponseEntity.ok().build();
     }
 
-    @PostMapping("/{scenarioId}/beacon-detect")
-    public ResponseEntity<BeaconDetectResponse> detectBeacon(
+    @Operation(summary = "[26.04.08] 비콘 감지 시뮬레이션(테스트/관리자용)")
+    @PostMapping("/{scenarioId}/simulate-beacon-detect")
+    public ResponseEntity<SimulateBeaconDetectResponse> simulateBeaconDetect(
             @PathVariable String scenarioId,
-            @RequestBody BeaconDetectRequest req
+            @RequestBody SimulateBeaconDetectRequest req
     ) {
-        return ResponseEntity.ok(scenarioService.detectBeacon(scenarioId, req));
+        return ResponseEntity.ok(
+                scenarioAdminService.simulateBeaconDetect(scenarioId, req)
+        );
     }
 
     @GetMapping("/{scenarioId}/students/{studentId}/triggered-assignments")

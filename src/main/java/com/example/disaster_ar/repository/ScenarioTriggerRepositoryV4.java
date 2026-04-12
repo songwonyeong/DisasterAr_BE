@@ -17,4 +17,10 @@ public interface ScenarioTriggerRepositoryV4 extends JpaRepository<ScenarioTrigg
             String scenarioId,
             String studentId
     );
+
+    boolean existsByScenario_IdAndStudent_IdAndAssignment_Id(
+            String scenarioId,
+            String studentId,
+            String assignmentId
+    );
 }

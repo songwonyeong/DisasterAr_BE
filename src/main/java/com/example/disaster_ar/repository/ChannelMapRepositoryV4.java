@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Optional;
 
 public interface ChannelMapRepositoryV4 extends JpaRepository<ChannelMapV4, String> {
+
     List<ChannelMapV4> findBySchool_IdOrderByFloorIndexAsc(String schoolId);
-    Optional<ChannelMapV4> findBySchool_IdAndFloorIndex(String schoolId, Integer floorIndex);
+
+    Optional<ChannelMapV4> findByIdAndSchool_Id(String mapId, String schoolId);
 }

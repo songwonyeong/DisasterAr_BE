@@ -1,10 +1,7 @@
 package com.example.disaster_ar.controller;
 
 import com.example.disaster_ar.domain.v4.SchoolV4;
-import com.example.disaster_ar.dto.channel.JoinClassroomRequest;
-import com.example.disaster_ar.dto.channel.JoinClassroomResponse;
-import com.example.disaster_ar.dto.channel.JoinSchoolRequest;
-import com.example.disaster_ar.dto.channel.JoinSchoolResponse;
+import com.example.disaster_ar.dto.channel.*;
 import com.example.disaster_ar.service.ChannelService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -13,9 +10,6 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import com.example.disaster_ar.dto.channel.ChannelMapResponse;
-import com.example.disaster_ar.dto.channel.ChannelMapUpdateRequest;
-import com.example.disaster_ar.dto.channel.FloorplanAnalyzeResponse;
 import org.springframework.beans.factory.annotation.Value;
 
 import java.util.List;
@@ -159,5 +153,53 @@ public class ChannelController {
     ) {
         channelService.deleteChannelMap(schoolId, mapId);
         return ResponseEntity.ok().build();
+    }
+
+    @Operation(summary = "[26.04.08] 구조도 분석 결과 적용 API")
+    @PostMapping("/{schoolId}/maps/{mapId}/analysis/apply")
+    public ResponseEntity<ChannelMapResponse> applyAnalysis(
+            @PathVariable String schoolId,
+            @PathVariable String mapId,
+            @RequestBody ApplyAnalysisRequest request
+    ) {
+        return ResponseEntity.ok(
+                channelService.applyAnalysis(schoolId, mapId, request)
+        );
+    }
+
+    @Operation(summary = "[26.04.08] 구조도 요소 목록 조회 API")
+    @GetMapping("/{schoolId}/maps/{mapId}/elements")
+    public ResponseEntity<List<ChannelElementTagResponse>> getMapElements(
+            @PathVariable String schoolId,
+            @PathVariable String mapId
+    ) {
+        return ResponseEntity.ok(
+                channelService.getMapElements(schoolId, mapId)
+        );
+    }
+
+    @Operation(summary = "[26.04.08] 구조도 요소 단건 조회 API")
+    @GetMapping("/{schoolId}/maps/{mapId}/elements/{elementId}")
+    public ResponseEntity<ChannelElementTagResponse> getMapElement(
+            @PathVariable String schoolId,
+            @PathVariable String mapId,
+            @PathVariable String elementId
+    ) {
+        return ResponseEntity.ok(
+                channelService.getMapElement(schoolId, mapId, elementId)
+        );
+    }
+
+    @Operation(summary = "[26.04.08] 구조도 요소 이름/태그 수정 API")
+    @PutMapping("/{schoolId}/maps/{mapId}/elements/{elementId}")
+    public ResponseEntity<ChannelElementTagResponse> updateMapElement(
+            @PathVariable String schoolId,
+            @PathVariable String mapId,
+            @PathVariable String elementId,
+            @RequestBody ChannelElementTagUpdateRequest request
+    ) {
+        return ResponseEntity.ok(
+                channelService.updateMapElement(schoolId, mapId, elementId, request)
+        );
     }
 }

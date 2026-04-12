@@ -5,8 +5,12 @@ import lombok.Setter;
 
 @Getter
 @Setter
-public class BeaconDetectRequest {
+public class SimulateBeaconDetectRequest {
+    private String classroomId;
     private String studentId;
     private String beaconId;
     private Integer rssi;
+    private Boolean updateLocation;
+    private Boolean saveEvent;
+    private String note;
 }

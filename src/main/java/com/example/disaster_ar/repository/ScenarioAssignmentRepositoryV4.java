@@ -7,6 +7,12 @@ import java.util.List;
 
 public interface ScenarioAssignmentRepositoryV4 extends JpaRepository<ScenarioAssignmentV4, String> {
     List<ScenarioAssignmentV4> findByScenario_IdAndBeacon_Id(String scenarioId, String beaconId);
-    List<ScenarioAssignmentV4> findByScenario_IdOrderByCreatedAtAsc(String scenarioId);
 
+    List<ScenarioAssignmentV4> findByScenario_IdAndClassroom_IdAndBeacon_Id(
+            String scenarioId,
+            String classroomId,
+            String beaconId
+    );
+
+    List<ScenarioAssignmentV4> findByScenario_IdOrderByCreatedAtAsc(String scenarioId);
 }

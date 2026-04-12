@@ -1,25 +1,13 @@
 package com.example.disaster_ar.service;
 
-import com.example.disaster_ar.domain.v4.ChannelMapV4;
-import com.example.disaster_ar.domain.v4.ClassroomV4;
-import com.example.disaster_ar.domain.v4.SchoolV4;
-import com.example.disaster_ar.domain.v4.StudentV4;
+import com.example.disaster_ar.domain.v4.*;
 import com.example.disaster_ar.domain.v4.enums.StudentStatus;
-import com.example.disaster_ar.dto.channel.JoinClassroomRequest;
-import com.example.disaster_ar.dto.channel.JoinClassroomResponse;
-import com.example.disaster_ar.dto.channel.JoinSchoolResponse;
-import com.example.disaster_ar.repository.ChannelMapRepositoryV4;
-import com.example.disaster_ar.repository.ClassroomRepository;
-import com.example.disaster_ar.repository.SchoolRepository;
-import com.example.disaster_ar.repository.StudentRepositoryV4;
-import com.example.disaster_ar.dto.channel.ChannelMapResponse;
+import com.example.disaster_ar.dto.channel.*;
+import com.example.disaster_ar.repository.*;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
-import com.example.disaster_ar.dto.channel.ChannelMapUpdateRequest;
-import com.example.disaster_ar.dto.channel.FloorplanAnalyzeResponse;
-import com.example.disaster_ar.dto.channel.PythonFloorplanAnalyzeResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.MediaType;
@@ -34,6 +22,7 @@ import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -45,6 +34,8 @@ public class ChannelService {
     private final StudentRepositoryV4 studentRepository;
     private final ChannelMapRepositoryV4 channelMapRepositoryV4;
     private final WebClient webClient;
+    private final ChannelElementTagRepositoryV4 channelElementTagRepositoryV4;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     @Value("${file.upload.dir}")
     private String fileUploadDir;
@@ -270,6 +261,8 @@ public class ChannelService {
 
         ChannelMapV4 saved = channelMapRepositoryV4.save(map);
 
+        syncElementTags(school, saved);
+
         return ChannelMapResponse.builder()
                 .mapId(saved.getId())
                 .floorIndex(saved.getFloorIndex())
@@ -437,4 +430,184 @@ public class ChannelService {
                 .updatedAt(map.getUpdatedAt())
                 .build();
     }
+
+    @Transactional
+    public ChannelMapResponse applyAnalysis(
+            String schoolId,
+            String mapId,
+            ApplyAnalysisRequest req
+    ) {
+        SchoolV4 school = schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("학교가 존재하지 않습니다."));
+
+        ChannelMapV4 map = channelMapRepositoryV4.findByIdAndSchool_Id(mapId, schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("구조도 맵이 존재하지 않습니다."));
+
+        if (req.getOutlineJson() != null) {
+            map.setOutlineJson(req.getOutlineJson());
+        }
+        if (req.getElementsJson() != null) {
+            map.setElementsJson(req.getElementsJson());
+        }
+        map.setUpdatedAt(LocalDateTime.now());
+
+        ChannelMapV4 saved = channelMapRepositoryV4.save(map);
+
+        syncElementTags(school, saved);
+
+        return toChannelMapResponse(saved);
+    }
+
+    private void syncElementTags(SchoolV4 school, ChannelMapV4 map) {
+        Integer floorIndex = map.getFloorIndex();
+        if (floorIndex == null) {
+            return;
+        }
+
+        List<ChannelElementTagV4> existing =
+                channelElementTagRepositoryV4.findBySchool_IdAndFloorIndex(school.getId(), floorIndex);
+
+        Map<String, ChannelElementTagV4> existingMap = existing.stream()
+                .collect(java.util.stream.Collectors.toMap(ChannelElementTagV4::getElementId, e -> e));
+
+        java.util.Set<String> currentIds = new java.util.HashSet<>();
+
+        try {
+            List<Map<String, Object>> elements = parseElements(map.getElementsJson());
+
+            for (Map<String, Object> element : elements) {
+                Object idObj = element.get("id");
+                if (idObj == null) continue;
+
+                String elementId = String.valueOf(idObj);
+                currentIds.add(elementId);
+
+                String elementType = element.get("type") != null ? String.valueOf(element.get("type")) : null;
+                String name = element.get("name") != null ? String.valueOf(element.get("name")) : null;
+
+                ChannelElementTagV4 tag = existingMap.get(elementId);
+                if (tag == null) {
+                    tag = ChannelElementTagV4.builder()
+                            .id(UUID.randomUUID().toString())
+                            .school(school)
+                            .floorIndex(floorIndex)
+                            .elementId(elementId)
+                            .build();
+                }
+
+                tag.setElementType(elementType);
+                tag.setName(name);
+                if (tag.getTagsJson() == null) {
+                    tag.setTagsJson("[]");
+                }
+                tag.setUpdatedAt(LocalDateTime.now());
+
+                channelElementTagRepositoryV4.save(tag);
+            }
+
+            for (ChannelElementTagV4 tag : existing) {
+                if (!currentIds.contains(tag.getElementId())) {
+                    channelElementTagRepositoryV4.delete(tag);
+                }
+            }
+
+        } catch (Exception e) {
+            throw new IllegalArgumentException("요소 태그 동기화 중 오류가 발생했습니다.", e);
+        }
+    }
+
+    private List<Map<String, Object>> parseElements(String elementsJson) throws Exception {
+        if (elementsJson == null || elementsJson.isBlank()) {
+            return new ArrayList<>();
+        }
+        return objectMapper.readValue(
+                elementsJson,
+                new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {}
+        );
+    }
+
+    public List<ChannelElementTagResponse> getMapElements(String schoolId, String mapId) {
+        ChannelMapV4 map = channelMapRepositoryV4.findByIdAndSchool_Id(mapId, schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("구조도 맵이 존재하지 않습니다."));
+
+        Integer floorIndex = map.getFloorIndex();
+        if (floorIndex == null) {
+            return new ArrayList<>();
+        }
+
+        return channelElementTagRepositoryV4.findBySchool_IdAndFloorIndex(schoolId, floorIndex)
+                .stream()
+                .map(tag -> ChannelElementTagResponse.builder()
+                        .elementId(tag.getElementId())
+                        .floorIndex(tag.getFloorIndex())
+                        .elementType(tag.getElementType())
+                        .name(tag.getName())
+                        .tagsJson(tag.getTagsJson())
+                        .updatedAt(tag.getUpdatedAt())
+                        .build())
+                .toList();
+    }
+
+    public ChannelElementTagResponse getMapElement(String schoolId, String mapId, String elementId) {
+        ChannelMapV4 map = channelMapRepositoryV4.findByIdAndSchool_Id(mapId, schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("구조도 맵이 존재하지 않습니다."));
+
+        Integer floorIndex = map.getFloorIndex();
+        if (floorIndex == null) {
+            throw new IllegalArgumentException("해당 구조도에 floorIndex가 없습니다.");
+        }
+
+        ChannelElementTagV4 tag = channelElementTagRepositoryV4
+                .findBySchool_IdAndFloorIndexAndElementId(schoolId, floorIndex, elementId)
+                .orElseThrow(() -> new IllegalArgumentException("요소가 존재하지 않습니다."));
+
+        return ChannelElementTagResponse.builder()
+                .elementId(tag.getElementId())
+                .floorIndex(tag.getFloorIndex())
+                .elementType(tag.getElementType())
+                .name(tag.getName())
+                .tagsJson(tag.getTagsJson())
+                .updatedAt(tag.getUpdatedAt())
+                .build();
+    }
+
+    @Transactional
+    public ChannelElementTagResponse updateMapElement(
+            String schoolId,
+            String mapId,
+            String elementId,
+            ChannelElementTagUpdateRequest req
+    ) {
+        ChannelMapV4 map = channelMapRepositoryV4.findByIdAndSchool_Id(mapId, schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("구조도 맵이 존재하지 않습니다."));
+
+        Integer floorIndex = map.getFloorIndex();
+        if (floorIndex == null) {
+            throw new IllegalArgumentException("해당 구조도에 floorIndex가 없습니다.");
+        }
+
+        ChannelElementTagV4 tag = channelElementTagRepositoryV4
+                .findBySchool_IdAndFloorIndexAndElementId(schoolId, floorIndex, elementId)
+                .orElseThrow(() -> new IllegalArgumentException("요소가 존재하지 않습니다."));
+
+        if (req.getName() != null) {
+            tag.setName(req.getName());
+        }
+        if (req.getTagsJson() != null) {
+            tag.setTagsJson(req.getTagsJson());
+        }
+        tag.setUpdatedAt(LocalDateTime.now());
+
+        ChannelElementTagV4 saved = channelElementTagRepositoryV4.save(tag);
+
+        return ChannelElementTagResponse.builder()
+                .elementId(saved.getElementId())
+                .floorIndex(saved.getFloorIndex())
+                .elementType(saved.getElementType())
+                .name(saved.getName())
+                .tagsJson(saved.getTagsJson())
+                .updatedAt(saved.getUpdatedAt())
+                .build();
+    }
+
 }

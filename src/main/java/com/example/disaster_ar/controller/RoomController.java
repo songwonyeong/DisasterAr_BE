@@ -14,6 +14,8 @@ import com.example.disaster_ar.dto.room.ActiveMapUpdateRequest;
 import com.example.disaster_ar.dto.room.GameStartContextResponse;
 import com.example.disaster_ar.dto.room.ActiveAssignmentResponse;
 import java.util.List;
+import com.example.disaster_ar.dto.room.CreateMapVersionFromChannelSetRequest;
+import com.example.disaster_ar.dto.room.RoomMapResponse;
 
 @Tag(name = "Room")
 @RestController
@@ -214,5 +216,16 @@ public class RoomController {
             @PathVariable String studentId
     ) {
         return ResponseEntity.ok(roomService.getActiveAssignments(classroomId, studentId));
+    }
+
+    @Operation(summary = "[26.04.08] 학교 전체 채널 구조도를 맵 버전으로 복사 API")
+    @PostMapping("/{classroomId}/map-versions/from-channel-set")
+    public ResponseEntity<RoomMapResponse> createMapVersionFromChannelSet(
+            @PathVariable String classroomId,
+            @RequestBody CreateMapVersionFromChannelSetRequest request
+    ) {
+        return ResponseEntity.ok(
+                roomService.createMapVersionFromChannelSet(classroomId, request)
+        );
     }
 }

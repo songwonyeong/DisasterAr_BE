@@ -20,12 +20,9 @@ import com.example.disaster_ar.domain.v4.ScenarioAssignmentV4;
 import com.example.disaster_ar.domain.v4.ScenarioTriggerV4;
 import com.example.disaster_ar.domain.v4.enums.TriggerReason;
 
-import java.util.Map;
+import java.util.*;
 
 import java.time.LocalDateTime;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -43,6 +40,7 @@ public class RoomService {
     private final ScenarioAssignmentRepositoryV4 scenarioAssignmentRepositoryV4;
     private final ScenarioTriggerRepositoryV4 scenarioTriggerRepositoryV4;
     private final ScenarioTeamMemberRepositoryV4 scenarioTeamMemberRepositoryV4;
+    private final UserRepository userRepositoryV4;
 
     public RoomResponse createRoom(RoomCreateRequest req) {
 
@@ -812,5 +810,108 @@ public class RoomService {
                             .build();
                 })
                 .toList();
+    }
+
+    @Transactional
+    public RoomMapResponse createMapVersionFromChannelSet(
+            String classroomId,
+            CreateMapVersionFromChannelSetRequest req
+    ) {
+        ClassroomV4 classroom = classroomRepository.findById(classroomId)
+                .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
+
+        if (classroom.getSchool() == null) {
+            throw new IllegalArgumentException("교실에 연결된 학교가 없습니다.");
+        }
+
+        if (!classroom.getSchool().getId().equals(req.getSchoolId())) {
+            throw new IllegalArgumentException("요청 schoolId와 교실의 학교가 일치하지 않습니다.");
+        }
+
+        List<ChannelMapV4> channelMaps = channelMapRepositoryV4
+                .findBySchool_IdOrderByFloorIndexAsc(req.getSchoolId());
+
+        if (channelMaps.isEmpty()) {
+            throw new IllegalArgumentException("해당 학교에 등록된 채널 구조도가 없습니다.");
+        }
+
+        Set<Integer> seen = new HashSet<>();
+        for (ChannelMapV4 map : channelMaps) {
+            if (map.getFloorIndex() == null) {
+                throw new IllegalArgumentException("floorIndex가 비어 있는 채널 구조도가 있습니다. mapId=" + map.getId());
+            }
+            if (!seen.add(map.getFloorIndex())) {
+                throw new IllegalArgumentException("중복된 floorIndex가 있습니다. floorIndex=" + map.getFloorIndex());
+            }
+        }
+
+        String floorsJson = buildFloorsJsonFromChannelMaps(channelMaps);
+
+        UserV4 createdBy = null;
+        if (req.getCreatedByUserId() != null && !req.getCreatedByUserId().isBlank()) {
+            createdBy = userRepositoryV4.findById(req.getCreatedByUserId())
+                    .orElseThrow(() -> new IllegalArgumentException("createdBy 사용자가 존재하지 않습니다."));
+        }
+
+        RoomMapVersionV4 version = RoomMapVersionV4.builder()
+                .id(UUID.randomUUID().toString())
+                .classroom(classroom)
+                .school(classroom.getSchool())
+                .label(
+                        req.getLabel() != null && !req.getLabel().isBlank()
+                                ? req.getLabel()
+                                : "채널 구조도 일괄 복사본"
+                )
+                .createdBy(createdBy)
+                .createdAt(LocalDateTime.now())
+                .floorsJson(floorsJson)
+                .build();
+
+        roomMapVersionRepositoryV4.save(version);
+
+        return RoomMapResponse.builder()
+                .mapVersionId(version.getId())
+                .classroomId(classroom.getId())
+                .schoolId(classroom.getSchool().getId())   // ⭐ 추가
+                .label(version.getLabel())
+                .floorsJson(version.getFloorsJson())       // ⭐ 추가
+                .createdAt(version.getCreatedAt())
+                .build();
+    }
+
+    private String buildFloorsJsonFromChannelMaps(List<ChannelMapV4> channelMaps) {
+        try {
+            List<Map<String, Object>> floors = new ArrayList<>();
+
+            for (ChannelMapV4 map : channelMaps) {
+                Map<String, Object> floor = new LinkedHashMap<>();
+                floor.put("sourceMapId", map.getId());
+                floor.put("floorIndex", map.getFloorIndex());
+                floor.put("floorLabel", map.getFloorLabel());
+                floor.put("uploadedImage", map.getUploadedImage());
+                floor.put("outlineJson", map.getOutlineJson());
+                floor.put("scaleMPerPx", map.getScaleMPerPx());
+                floor.put("originX", map.getOriginX());
+                floor.put("originY", map.getOriginY());
+                floor.put("elementsJson", parseJsonOrDefaultArray(map.getElementsJson()));
+
+                floors.add(floor);
+            }
+
+            return objectMapper.writeValueAsString(floors);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("채널 구조도 세트를 floorsJson으로 변환하는 중 오류가 발생했습니다.", e);
+        }
+    }
+
+    private Object parseJsonOrDefaultArray(String json) {
+        try {
+            if (json == null || json.isBlank()) {
+                return new ArrayList<>();
+            }
+            return objectMapper.readValue(json, Object.class);
+        } catch (Exception e) {
+            return new ArrayList<>();
+        }
     }
 }

@@ -2,8 +2,6 @@ package com.example.disaster_ar.service;
 
 import com.example.disaster_ar.domain.v4.*;
 import com.example.disaster_ar.domain.v4.enums.BeaconState;
-import com.example.disaster_ar.domain.v4.enums.ScenarioActionType;
-import com.example.disaster_ar.domain.v4.enums.TriggerReason;
 import com.example.disaster_ar.dto.beacon.BeaconScanRequest;
 import com.example.disaster_ar.dto.beacon.BeaconSignal;
 import com.example.disaster_ar.repository.*;
@@ -14,9 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.Comparator;
-import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -26,10 +22,8 @@ public class BeaconTrackingService {
     private final StudentRepositoryV4 studentRepository;
     private final BeaconRepositoryV4 beaconRepositoryV4;
     private final StudentBeaconEventRepositoryV4 studentBeaconEventRepositoryV4;
-    private final ScenarioAssignmentRepositoryV4 scenarioAssignmentRepositoryV4;
-    private final ScenarioTriggerRepositoryV4 scenarioTriggerRepositoryV4;
-    private final ScenarioActionEventRepositoryV4 scenarioActionEventRepositoryV4;
     private final ObjectMapper objectMapper;
+    private final ScenarioTriggerService scenarioTriggerService;
 
     @Transactional
     public void processScan(BeaconScanRequest req) {
@@ -100,7 +94,18 @@ public class BeaconTrackingService {
         studentRepository.save(student);
 
         if (changed) {
-            handleScenarioTrigger(student, beacon, strongest.getRssi());
+            ClassroomV4 classroom = student.getClassroom();
+            ScenarioV4 scenario = classroom != null ? classroom.getActiveScenario() : null;
+
+            if (scenario != null) {
+                scenarioTriggerService.triggerByBeacon(
+                        scenario,
+                        classroom,
+                        student,
+                        beacon,
+                        strongest.getRssi()
+                );
+            }
         }
     }
 
@@ -128,73 +133,6 @@ public class BeaconTrackingService {
                 .build();
 
         studentBeaconEventRepositoryV4.save(event);
-    }
-
-    private void handleScenarioTrigger(
-            StudentV4 student,
-            BeaconV4 beacon,
-            Integer rssi
-    ) {
-        ClassroomV4 classroom = student.getClassroom();
-        if (classroom == null || classroom.getActiveScenario() == null) {
-            return;
-        }
-
-        ScenarioV4 scenario = classroom.getActiveScenario();
-
-        List<ScenarioAssignmentV4> assignments =
-                scenarioAssignmentRepositoryV4.findByScenario_IdAndBeacon_Id(
-                        scenario.getId(),
-                        beacon.getId()
-                );
-
-        if (assignments.isEmpty()) {
-            return;
-        }
-
-        for (ScenarioAssignmentV4 assignment : assignments) {
-            Optional<ScenarioTriggerV4> existing =
-                    scenarioTriggerRepositoryV4.findByScenario_IdAndStudent_IdAndAssignment_Id(
-                            scenario.getId(),
-                            student.getId(),
-                            assignment.getId()
-                    );
-
-            if (existing.isPresent()) {
-                continue;
-            }
-
-            String payloadJson = buildTriggerPayload(beacon, rssi);
-
-            ScenarioTriggerV4 trigger = ScenarioTriggerV4.builder()
-                    .id(UUID.randomUUID().toString())
-                    .scenario(scenario)
-                    .assignment(assignment)
-                    .student(student)
-                    .triggerReason(TriggerReason.BEACON_DETECTED)
-                    .triggeredAt(LocalDateTime.now())
-                    .status("TRIGGERED")
-                    .payloadJson(payloadJson)
-                    .build();
-
-            scenarioTriggerRepositoryV4.save(trigger);
-
-            ScenarioActionEventV4 actionEvent = ScenarioActionEventV4.builder()
-                    .id(UUID.randomUUID().toString())
-                    .scenario(scenario)
-                    .classroom(classroom)
-                    .student(student)
-                    .actionType(ScenarioActionType.BEACON_ENTER)
-                    .floorIndex(beacon.getFloorIndex())
-                    .beacon(beacon)
-                    .valueInt(rssi)
-                    .valueText(beacon.getName())
-                    .metaJson(payloadJson)
-                    .createdAt(LocalDateTime.now())
-                    .build();
-
-            scenarioActionEventRepositoryV4.save(actionEvent);
-        }
     }
 
     private String buildTriggerPayload(BeaconV4 beacon, Integer rssi) {
