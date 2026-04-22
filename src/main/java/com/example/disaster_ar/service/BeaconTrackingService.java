@@ -9,11 +9,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.example.disaster_ar.domain.v4.BeaconElementMapV4;
 
 import java.time.LocalDateTime;
-import java.util.Comparator;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 @Service
 @RequiredArgsConstructor
@@ -24,6 +23,7 @@ public class BeaconTrackingService {
     private final StudentBeaconEventRepositoryV4 studentBeaconEventRepositoryV4;
     private final ObjectMapper objectMapper;
     private final ScenarioTriggerService scenarioTriggerService;
+    private final BeaconElementMapRepositoryV4 beaconElementMapRepositoryV4;
 
     @Transactional
     public void processScan(BeaconScanRequest req) {
@@ -105,6 +105,21 @@ public class BeaconTrackingService {
                         beacon,
                         strongest.getRssi()
                 );
+                Optional<BeaconElementMapV4> mapping =
+                        beaconElementMapRepositoryV4.findByBeacon_Id(beacon.getId());
+
+                if (mapping.isPresent()) {
+                    String elementId = mapping.get().getElementId();
+
+                    scenarioTriggerService.triggerByElement(
+                            scenario,
+                            classroom,
+                            student,
+                            elementId,
+                            beacon,
+                            strongest.getRssi()
+                    );
+                }
             }
         }
     }

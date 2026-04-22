@@ -14,6 +14,7 @@ import com.example.disaster_ar.dto.scenario.SimulateBeaconDetectResponse;
 import com.example.disaster_ar.service.ScenarioAdminService;
 
 import java.util.List;
+import java.util.Map;
 
 @Tag(name = "Scenario")
 @RestController
@@ -172,6 +173,17 @@ public class ScenarioController {
     ) {
         return ResponseEntity.ok(
                 scenarioService.getTeamSteps(scenarioId, assignmentId, teamId)
+        );
+    }
+
+    @Operation(summary = "[26.04.22] 시나리오 트리거 로그 조회 API")
+    @GetMapping("/triggers")
+    public ResponseEntity<List<Map<String, Object>>> getTriggers(
+            @RequestParam String scenarioId,
+            @RequestParam(required = false) String studentId
+    ) {
+        return ResponseEntity.ok(
+                scenarioService.getScenarioTriggers(scenarioId, studentId)
         );
     }
 }

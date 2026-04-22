@@ -2,13 +2,12 @@ package com.example.disaster_ar.controller;
 
 import com.example.disaster_ar.dto.beacon.BeaconRequest;
 import com.example.disaster_ar.dto.beacon.BeaconResponse;
+import com.example.disaster_ar.dto.beacon.BeaconScanRequest;
 import com.example.disaster_ar.service.BeaconService;
+import com.example.disaster_ar.service.BeaconTrackingService;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-import com.example.disaster_ar.dto.beacon.BeaconScanRequest;
-import com.example.disaster_ar.service.BeaconTrackingService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -35,6 +34,17 @@ public class BeaconController {
             @RequestParam String schoolId
     ) {
         return ResponseEntity.ok(beaconService.getBeacons(schoolId));
+    }
+
+    @Operation(summary = "[26.04.22] 층별 비콘 목록 조회 API")
+    @GetMapping("/by-floor")
+    public ResponseEntity<List<BeaconResponse>> getBeaconsByFloor(
+            @RequestParam String schoolId,
+            @RequestParam Integer floorIndex
+    ) {
+        return ResponseEntity.ok(
+                beaconService.getBeaconsByFloor(schoolId, floorIndex)
+        );
     }
 
     @Operation(summary = "비콘 수정")

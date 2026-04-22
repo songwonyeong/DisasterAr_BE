@@ -7,6 +7,7 @@ import com.example.disaster_ar.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -101,5 +102,76 @@ public class ScenarioTriggerService {
         } catch (Exception e) {
             return "{}";
         }
+    }
+
+    @Transactional
+    public List<String> triggerByElement(
+            ScenarioV4 scenario,
+            ClassroomV4 classroom,
+            StudentV4 student,
+            String elementId,
+            BeaconV4 beacon,
+            Integer rssi
+    ) {
+        List<ScenarioAssignmentV4> assignments =
+                scenarioAssignmentRepositoryV4.findByScenario_IdAndClassroom_IdAndElementId(
+                        scenario.getId(),
+                        classroom.getId(),
+                        elementId
+                );
+
+        if (assignments.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<String> triggeredIds = new ArrayList<>();
+
+        for (ScenarioAssignmentV4 assignment : assignments) {
+            boolean alreadyTriggered =
+                    scenarioTriggerRepositoryV4
+                            .findByScenario_IdAndStudent_IdAndAssignment_Id(
+                                    scenario.getId(),
+                                    student.getId(),
+                                    assignment.getId()
+                            )
+                            .isPresent();
+
+            if (alreadyTriggered) {
+                continue;
+            }
+
+            ScenarioTriggerV4 trigger = ScenarioTriggerV4.builder()
+                    .id(UUID.randomUUID().toString())
+                    .scenario(scenario)
+                    .assignment(assignment)
+                    .student(student)
+                    .triggerReason(TriggerReason.BEACON_DETECTED)
+                    .triggeredAt(LocalDateTime.now())
+                    .status("TRIGGERED")
+                    .payloadJson(buildTriggerPayload(beacon, rssi))
+                    .build();
+
+            scenarioTriggerRepositoryV4.save(trigger);
+            triggeredIds.add(assignment.getId());
+
+            ScenarioActionEventV4 actionEvent = ScenarioActionEventV4.builder()
+                    .id(UUID.randomUUID().toString())
+                    .scenario(scenario)
+                    .classroom(classroom)
+                    .student(student)
+                    .actionType(ScenarioActionType.BEACON_ENTER)
+                    .floorIndex(beacon != null ? beacon.getFloorIndex() : null)
+                    .elementId(elementId)
+                    .beacon(beacon)
+                    .valueInt(rssi)
+                    .valueText(beacon != null ? beacon.getName() : null)
+                    .metaJson(buildTriggerPayload(beacon, rssi))
+                    .createdAt(LocalDateTime.now())
+                    .build();
+
+            scenarioActionEventRepositoryV4.save(actionEvent);
+        }
+
+        return triggeredIds;
     }
 }

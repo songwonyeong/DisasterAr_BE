@@ -109,4 +109,18 @@ public class BeaconService {
                 .updatedAt(beacon.getUpdatedAt())
                 .build();
     }
+
+    public List<BeaconResponse> getBeaconsByFloor(String schoolId, Integer floorIndex) {
+        if (floorIndex == null) {
+            throw new IllegalArgumentException("floorIndex가 비어 있습니다.");
+        }
+
+        schoolRepository.findById(schoolId)
+                .orElseThrow(() -> new IllegalArgumentException("학교가 존재하지 않습니다."));
+
+        return beaconRepositoryV4.findBySchool_IdAndFloorIndexOrderByBeaconNoAsc(schoolId, floorIndex)
+                .stream()
+                .map(this::toDto)
+                .toList();
+    }
 }

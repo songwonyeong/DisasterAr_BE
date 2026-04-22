@@ -9,4 +9,5 @@ import java.util.Optional;
 public interface BeaconRepositoryV4 extends JpaRepository<BeaconV4, String> {
     List<BeaconV4> findBySchool_IdOrderByFloorIndexAscBeaconNoAsc(String schoolId);
     Optional<BeaconV4> findByUuidAndMajorAndMinor(String uuid, Integer major, Integer minor);
+    List<BeaconV4> findBySchool_IdAndFloorIndexOrderByBeaconNoAsc(String schoolId, Integer floorIndex);
 }

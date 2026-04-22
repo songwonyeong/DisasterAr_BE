@@ -59,6 +59,8 @@ public class AuthService {
         user.setPassword(passwordEncoder.encode(req.getPassword()));
         user.setName(req.getName());
         user.setRole(UserRole.TEACHER);
+        user.setSchool(school);
+
 
         userRepository.save(user);
 
@@ -81,7 +83,9 @@ public class AuthService {
         }
 
         // V4 User에 school FK가 없다면(네 V4 DDL users에는 school_id 없음) → null 반환이 정상
-        String schoolId = null;
+        String schoolId = user.getSchool() != null
+                ? user.getSchool().getId()
+                : null;
 
         return new AuthResponse(
                 user.getId(),

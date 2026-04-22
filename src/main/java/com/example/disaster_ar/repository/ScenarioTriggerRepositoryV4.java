@@ -23,4 +23,6 @@ public interface ScenarioTriggerRepositoryV4 extends JpaRepository<ScenarioTrigg
             String studentId,
             String assignmentId
     );
+
+    List<ScenarioTriggerV4> findByScenario_IdOrderByTriggeredAtDesc(String scenarioId);
 }

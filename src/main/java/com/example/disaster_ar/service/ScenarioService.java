@@ -6,10 +6,12 @@ import com.example.disaster_ar.dto.scenario.*;
 import com.example.disaster_ar.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -816,5 +818,35 @@ public class ScenarioService {
                 .teamId(teamId)
                 .steps(stepItems)
                 .build();
+    }
+
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> getScenarioTriggers(String scenarioId, String studentId) {
+
+        scenarioRepository.findById(scenarioId)
+                .orElseThrow(() -> new IllegalArgumentException("시나리오가 존재하지 않습니다."));
+
+        List<ScenarioTriggerV4> triggers;
+
+        if (studentId != null && !studentId.isBlank()) {
+            triggers = scenarioTriggerRepositoryV4
+                    .findByScenario_IdAndStudent_IdOrderByTriggeredAtDesc(scenarioId, studentId);
+        } else {
+            triggers = scenarioTriggerRepositoryV4
+                    .findByScenario_IdOrderByTriggeredAtDesc(scenarioId);
+        }
+
+        return triggers.stream().map(t -> {
+            Map<String, Object> map = new java.util.HashMap<>();
+            map.put("triggerId", t.getId());
+            map.put("scenarioId", t.getScenario() != null ? t.getScenario().getId() : null);
+            map.put("assignmentId", t.getAssignment() != null ? t.getAssignment().getId() : null);
+            map.put("studentId", t.getStudent() != null ? t.getStudent().getId() : null);
+            map.put("triggerReason", t.getTriggerReason() != null ? t.getTriggerReason().name() : null);
+            map.put("triggeredAt", t.getTriggeredAt());
+            map.put("status", t.getStatus());
+            map.put("payloadJson", t.getPayloadJson());
+            return map;
+        }).toList();
     }
 }

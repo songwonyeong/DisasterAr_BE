@@ -15,4 +15,10 @@ public interface ScenarioAssignmentRepositoryV4 extends JpaRepository<ScenarioAs
     );
 
     List<ScenarioAssignmentV4> findByScenario_IdOrderByCreatedAtAsc(String scenarioId);
+
+    List<ScenarioAssignmentV4> findByScenario_IdAndClassroom_IdAndElementId(
+            String scenarioId,
+            String classroomId,
+            String elementId
+    );
 }
