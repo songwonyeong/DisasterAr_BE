@@ -2,6 +2,8 @@ package com.example.disaster_ar.controller;
 
 import com.example.disaster_ar.dto.scenario.*;
 import com.example.disaster_ar.service.ScenarioService;
+import com.example.disaster_ar.service.ScenarioTeamAssignmentService;
+import com.example.disaster_ar.service.ScenarioTeamDistributionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -24,6 +26,8 @@ public class ScenarioController {
 
     private final ScenarioService scenarioService;
     private final ScenarioAdminService scenarioAdminService;
+    private final ScenarioTeamDistributionService scenarioTeamDistributionService;
+    private final ScenarioTeamAssignmentService scenarioTeamAssignmentService;
 
     // ✅ 시나리오 생성
     @Operation(summary = "시나리오 생성")
@@ -184,6 +188,27 @@ public class ScenarioController {
     ) {
         return ResponseEntity.ok(
                 scenarioService.getScenarioTriggers(scenarioId, studentId)
+        );
+    }
+
+    @Operation(summary = "[26.04.27] 시나리오 팀 정원 계산 및 저장 API")
+    @PostMapping("/{scenarioId}/teams/distribute")
+    public ResponseEntity<TeamDistributionResponse> distributeTeams(
+            @PathVariable String scenarioId,
+            @RequestBody(required = false) TeamDistributionRequest req
+    ) {
+        return ResponseEntity.ok(
+                scenarioTeamDistributionService.distributeTeams(scenarioId, req)
+        );
+    }
+
+    @Operation(summary = "[26.04.27] 시나리오 학생 랜덤 팀 배정 API")
+    @PostMapping("/{scenarioId}/teams/assign-students")
+    public ResponseEntity<TeamAssignmentResponse> assignStudentsToTeams(
+            @PathVariable String scenarioId
+    ) {
+        return ResponseEntity.ok(
+                scenarioTeamAssignmentService.assignStudents(scenarioId)
         );
     }
 }

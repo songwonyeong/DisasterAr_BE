@@ -6,4 +6,6 @@ import java.util.List;
 
 public interface StudentRepositoryV4 extends JpaRepository<StudentV4, String> {
     java.util.List<StudentV4> findByClassroom_IdOrderByJoinedAtAsc(String classroomId);
+
+    List<StudentV4> findByClassroom_IdAndIsKickedFalseOrderByJoinedAtAsc(String classroomId);
 }
