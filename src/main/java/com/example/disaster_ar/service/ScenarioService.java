@@ -849,4 +849,15 @@ public class ScenarioService {
             return map;
         }).toList();
     }
+
+    @Transactional
+    public void deleteScenario(String scenarioId) {
+        ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
+                .orElseThrow(() -> new IllegalArgumentException("시나리오 없음"));
+
+        // ⭐ 이거 핵심
+        classroomRepository.clearActiveScenarioByScenarioId(scenarioId);
+
+        scenarioRepository.delete(scenario);
+    }
 }

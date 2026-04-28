@@ -210,5 +210,13 @@ public class ScenarioController {
         return ResponseEntity.ok(
                 scenarioTeamAssignmentService.assignStudents(scenarioId)
         );
+
+    }
+
+    @Operation(summary = "[26.04.28] 시나리오 삭제 API")
+    @DeleteMapping("/{scenarioId}")
+    public ResponseEntity<Void> deleteScenario(@PathVariable String scenarioId) {
+        scenarioService.deleteScenario(scenarioId);
+        return ResponseEntity.ok().build();
     }
 }

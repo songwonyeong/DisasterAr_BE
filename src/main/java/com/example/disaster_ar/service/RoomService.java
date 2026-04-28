@@ -914,4 +914,25 @@ public class RoomService {
             return new ArrayList<>();
         }
     }
+
+    @Transactional
+    public void updateActiveScenario(String classroomId, String scenarioId) {
+
+        ClassroomV4 classroom = classroomRepository.findById(classroomId)
+                .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
+
+        ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
+                .orElseThrow(() -> new IllegalArgumentException("시나리오가 존재하지 않습니다."));
+
+        // ⭐ 같은 교실 소속인지 검증
+        if (scenario.getClassroom() == null ||
+                !scenario.getClassroom().getId().equals(classroom.getId())) {
+            throw new IllegalArgumentException("해당 시나리오는 이 교실 소속이 아닙니다.");
+        }
+
+        classroom.setActiveScenario(scenario);
+        classroom.setUpdatedAt(LocalDateTime.now());
+
+        classroomRepository.save(classroom);
+    }
 }

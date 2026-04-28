@@ -228,4 +228,14 @@ public class RoomController {
                 roomService.createMapVersionFromChannelSet(classroomId, request)
         );
     }
+
+    @Operation(summary = "[26.04.28] 시나리오 활성화 API")
+    @PutMapping("/{classroomId}/active-scenario")
+    public ResponseEntity<Void> updateActiveScenario(
+            @PathVariable String classroomId,
+            @RequestBody ActiveScenarioRequest request
+    ) {
+        roomService.updateActiveScenario(classroomId, request.scenarioId());
+        return ResponseEntity.ok().build();
+    }
 }
