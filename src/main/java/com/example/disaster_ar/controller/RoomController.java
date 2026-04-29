@@ -2,6 +2,7 @@ package com.example.disaster_ar.controller;
 
 import com.example.disaster_ar.dto.room.*;
 import com.example.disaster_ar.service.RoomService;
+import com.example.disaster_ar.service.YoloService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -13,9 +14,11 @@ import com.example.disaster_ar.dto.room.ActiveMapResponse;
 import com.example.disaster_ar.dto.room.ActiveMapUpdateRequest;
 import com.example.disaster_ar.dto.room.GameStartContextResponse;
 import com.example.disaster_ar.dto.room.ActiveAssignmentResponse;
-import java.util.List;
+import java.util.*;
+
 import com.example.disaster_ar.dto.room.CreateMapVersionFromChannelSetRequest;
 import com.example.disaster_ar.dto.room.RoomMapResponse;
+import org.springframework.web.multipart.MultipartFile;
 
 @Tag(name = "Room")
 @RestController
@@ -24,6 +27,7 @@ import com.example.disaster_ar.dto.room.RoomMapResponse;
 public class RoomController {
 
     private final RoomService roomService;
+    private final YoloService yoloService;
 
     /**
      * 방 생성 (선생님/관리자가 호출)
@@ -237,5 +241,18 @@ public class RoomController {
     ) {
         roomService.updateActiveScenario(classroomId, request.scenarioId());
         return ResponseEntity.ok().build();
+    }
+
+    @Operation(summary = "[26.04.30] 욜로 서버")
+    @PostMapping("/{classroomId}/yolo/detect")
+    public ResponseEntity<?> detectYolo(
+            @PathVariable String classroomId,
+            @RequestParam("image") MultipartFile image,
+            @RequestParam(value = "conf", required = false) Double conf
+    ) {
+
+        Map<String, Object> result = yoloService.detect(image, conf);
+
+        return ResponseEntity.ok(result);
     }
 }
