@@ -41,6 +41,7 @@ public class RoomService {
     private final ScenarioTriggerRepositoryV4 scenarioTriggerRepositoryV4;
     private final ScenarioTeamMemberRepositoryV4 scenarioTeamMemberRepositoryV4;
     private final UserRepository userRepositoryV4;
+    private final ScenarioAssignmentService scenarioAssignmentService;
 
     public RoomResponse createRoom(RoomCreateRequest req) {
 
@@ -203,6 +204,8 @@ public class RoomService {
         classroom.setUpdatedAt(LocalDateTime.now());
 
         ClassroomV4 saved = classroomRepository.save(classroom);
+
+        scenarioAssignmentService.createDefaultFireAssignmentsIfEmpty(scenario.getId(), saved.getId());
 
         createOnStartTriggers(saved, scenario);
 

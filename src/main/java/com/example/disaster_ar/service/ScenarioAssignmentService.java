@@ -10,6 +10,10 @@ import com.example.disaster_ar.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.example.disaster_ar.domain.v4.enums.ContentType;
+import com.example.disaster_ar.domain.v4.enums.MissionScope;
+import com.example.disaster_ar.domain.v4.enums.ScenarioType;
+import java.util.ArrayList;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -135,6 +139,95 @@ public class ScenarioAssignmentService {
         scenarioAssignmentRepositoryV4.delete(assignment);
     }
 
+    @Transactional
+    public void createDefaultFireAssignmentsIfEmpty(String scenarioId, String classroomId) {
+        if (scenarioAssignmentRepositoryV4.existsByScenario_Id(scenarioId)) {
+            return;
+        }
+
+        ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
+                .orElseThrow(() -> new IllegalArgumentException("시나리오가 존재하지 않습니다."));
+
+        ClassroomV4 classroom = classroomRepository.findById(classroomId)
+                .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
+
+        if (scenario.getScenarioType() != ScenarioType.FIRE) {
+            return;
+        }
+
+        Integer floorIndex = scenario.getDisasterOriginFloorIndex() != null
+                ? scenario.getDisasterOriginFloorIndex()
+                : 0;
+
+        List<ScenarioAssignmentV4> assignments = new ArrayList<>();
+
+        assignments.add(createDefaultAssignment(
+                scenario, classroom,
+                createMissionContent("랜덤 퀴즈 3개 이상 맞추기", "전체 랜덤 퀴즈 5개 중 3개 이상 정답 처리"),
+                AssignmentType.QUIZ,
+                TargetType.ALL,
+                floorIndex,
+                "{\"activationType\":\"ON_START\",\"score\":8,\"requiredCorrectCount\":3,\"totalQuizCount\":5}"
+        ));
+
+        assignments.add(createDefaultAssignment(
+                scenario, classroom,
+                createMissionContent("119 신고 순서 맞추기", "신고자 이름, 화재 주소, 신고자 전화번호, 화재 원인을 올바른 순서로 선택"),
+                AssignmentType.MISSION,
+                TargetType.ALL,
+                floorIndex,
+                "{\"activationType\":\"ON_START\",\"score\":6,\"missionCode\":\"COMMON_REPORT_CALL\"}"
+        ));
+
+        assignments.add(createDefaultAssignment(
+                scenario, classroom,
+                createMissionContent("소화기 찾기", "주변에서 소화기를 찾아 인식하기"),
+                AssignmentType.MISSION,
+                TargetType.ALL,
+                floorIndex,
+                "{\"activationType\":\"ON_START\",\"score\":6,\"missionCode\":\"COMMON_FIND_EXTINGUISHER\"}"
+        ));
+
+        assignments.add(createDefaultAssignment(
+                scenario, classroom,
+                createMissionContent("제한 시간 내 안전구역 도착", "훈련 제한 시간 안에 안전구역에 진입"),
+                AssignmentType.MISSION,
+                TargetType.ALL,
+                floorIndex,
+                "{\"activationType\":\"ON_START\",\"score\":10,\"missionCode\":\"COMMON_SAFE_ZONE\"}"
+        ));
+
+        assignments.add(createDefaultAssignment(
+                scenario, classroom,
+                createMissionContent("소화팀: 소화기 획득", "YOLO로 소화기를 인식하고 인벤토리에 1회 획득"),
+                AssignmentType.MISSION,
+                TargetType.TEAM,
+                floorIndex,
+                "{\"activationType\":\"ON_START\",\"score\":10,\"missionCode\":\"FIRETEAM_GET_EXTINGUISHER\"}"
+        ));
+
+        assignments.add(createDefaultAssignment(
+                scenario, classroom,
+                createMissionContent("소화팀: 소화기 사용 퀴즈", "소화기 사용 전 카드 퀴즈 수행, 기회 3회"),
+                AssignmentType.QUIZ,
+                TargetType.TEAM,
+                floorIndex,
+                "{\"activationType\":\"ON_START\",\"score\":20,\"missionCode\":\"FIRETEAM_EXTINGUISHER_QUIZ\",\"life\":3,\"cooldownSeconds\":10}"
+        ));
+
+        assignments.add(createDefaultAssignment(
+                scenario, classroom,
+                createMissionContent("소화팀: 도넛 게임으로 불 끄기", "퀴즈 통과 후 도넛 게임을 통해 화재 진압"),
+                AssignmentType.MISSION,
+                TargetType.TEAM,
+                floorIndex,
+                "{\"activationType\":\"ON_START\",\"score\":10,\"missionCode\":\"FIRETEAM_PUT_OUT_FIRE\"}"
+        ));
+
+        scenarioAssignmentRepositoryV4.saveAll(assignments);
+    }
+
+
     private void validateBeacon(ClassroomV4 classroom, Integer floorIndex, BeaconV4 beacon) {
         if (beacon.getSchool() == null || !beacon.getSchool().getId().equals(classroom.getSchool().getId())) {
             throw new IllegalArgumentException("비콘이 해당 학교 소속이 아닙니다.");
@@ -179,6 +272,40 @@ public class ScenarioAssignmentService {
                 .paramsJson(a.getParamsJson())
                 .createdByType(a.getCreatedByType() != null ? a.getCreatedByType().name() : null)
                 .createdByUserId(a.getCreatedByUser() != null ? a.getCreatedByUser().getId() : null)
+                .build();
+    }
+
+    private ContentV4 createMissionContent(String title, String description) {
+        ContentV4 content = ContentV4.builder()
+                .id(UUID.randomUUID().toString())
+                .contentType(ContentType.MISSION)
+                .missionScope(MissionScope.INDIVIDUAL)
+                .title(title)
+                .description(description)
+                .build();
+
+        return contentRepository.save(content);
+    }
+
+    private ScenarioAssignmentV4 createDefaultAssignment(
+            ScenarioV4 scenario,
+            ClassroomV4 classroom,
+            ContentV4 content,
+            AssignmentType assignmentType,
+            TargetType targetType,
+            Integer floorIndex,
+            String paramsJson
+    ) {
+        return ScenarioAssignmentV4.builder()
+                .id(UUID.randomUUID().toString())
+                .scenario(scenario)
+                .classroom(classroom)
+                .assignmentType(assignmentType)
+                .content(content)
+                .targetType(targetType)
+                .floorIndex(floorIndex)
+                .paramsJson(paramsJson)
+                .createdAt(LocalDateTime.now())
                 .build();
     }
 }
