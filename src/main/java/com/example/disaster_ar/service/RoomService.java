@@ -19,10 +19,12 @@ import org.springframework.transaction.annotation.Transactional;
 import com.example.disaster_ar.domain.v4.ScenarioAssignmentV4;
 import com.example.disaster_ar.domain.v4.ScenarioTriggerV4;
 import com.example.disaster_ar.domain.v4.enums.TriggerReason;
+import com.example.disaster_ar.domain.v4.ScenarioTeamV4;
+import com.example.disaster_ar.domain.v4.ScenarioTeamMemberV4;
+import com.example.disaster_ar.domain.v4.enums.ActorType;
+import java.time.LocalDateTime;
 
 import java.util.*;
-
-import java.time.LocalDateTime;
 
 @Service
 @RequiredArgsConstructor
@@ -42,6 +44,8 @@ public class RoomService {
     private final ScenarioTeamMemberRepositoryV4 scenarioTeamMemberRepositoryV4;
     private final UserRepository userRepositoryV4;
     private final ScenarioAssignmentService scenarioAssignmentService;
+    private final ScenarioTeamRepositoryV4 scenarioTeamRepositoryV4;
+    private final StudentRepositoryV4 studentRepositoryV4;
 
     public RoomResponse createRoom(RoomCreateRequest req) {
 
@@ -206,6 +210,10 @@ public class RoomService {
         ClassroomV4 saved = classroomRepository.save(classroom);
 
         scenarioAssignmentService.createDefaultFireAssignmentsIfEmpty(scenario.getId(), saved.getId());
+
+        assignTeamsIfEmpty(scenario.getId(), saved.getId());
+
+        linkFireTeamAssignments(scenario.getId());
 
         createOnStartTriggers(saved, scenario);
 
@@ -937,5 +945,134 @@ public class RoomService {
         classroom.setUpdatedAt(LocalDateTime.now());
 
         classroomRepository.save(classroom);
+    }
+
+    @Transactional
+    public void assignTeamsIfEmpty(String scenarioId, String classroomId) {
+
+        // 이미 팀 있으면 패스
+        if (scenarioTeamRepositoryV4.existsByScenario_Id(scenarioId)) {
+            return;
+        }
+
+        List<StudentV4> students = studentRepositoryV4
+                .findByClassroom_IdOrderByJoinedAtAsc(classroomId);
+
+        if (students.isEmpty()) {
+            System.out.println("⚠ 학생 없음 → 팀 배정 스킵");
+            return;
+        }
+
+        int total = students.size();
+
+        int civilianCount = (int) Math.round(total * 0.5);
+        int fireCount = (int) Math.round(total * 0.3);
+        int emergencyCount = total - civilianCount - fireCount;
+
+        ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
+                .orElseThrow();
+
+        // 팀 생성
+        ScenarioTeamV4 civilianTeam = ScenarioTeamV4.builder()
+                .id(UUID.randomUUID().toString())
+                .scenario(scenario)
+                .teamCode("CIVILIAN")
+                .teamName("시민")
+                .build();
+
+        ScenarioTeamV4 fireTeam = ScenarioTeamV4.builder()
+                .id(UUID.randomUUID().toString())
+                .scenario(scenario)
+                .teamCode("FIRE")
+                .teamName("소화팀")
+                .build();
+
+        ScenarioTeamV4 emergencyTeam = ScenarioTeamV4.builder()
+                .id(UUID.randomUUID().toString())
+                .scenario(scenario)
+                .teamCode("EMERGENCY")
+                .teamName("응급팀")
+                .build();
+
+        scenarioTeamRepositoryV4.saveAll(
+                List.of(civilianTeam, fireTeam, emergencyTeam)
+        );
+
+        List<ScenarioTeamMemberV4> members = new ArrayList<>();
+
+        int index = 0;
+
+        // 시민
+        for (int i = 0; i < civilianCount && index < total; i++) {
+            members.add(createMember(scenario, students.get(index++), civilianTeam));
+        }
+
+        // 소화팀
+        for (int i = 0; i < fireCount && index < total; i++) {
+            members.add(createMember(scenario, students.get(index++), fireTeam));
+        }
+
+        // 응급팀
+        for (; index < total; index++) {
+            members.add(createMember(scenario, students.get(index), emergencyTeam));
+        }
+
+        scenarioTeamMemberRepositoryV4.saveAll(members);
+
+        System.out.println("🔥 팀 배정 완료: 시민=" + civilianCount
+                + ", 소화=" + fireCount
+                + ", 응급=" + emergencyCount);
+    }
+
+    private ScenarioTeamMemberV4 createMember(
+            ScenarioV4 scenario,
+            StudentV4 student,
+            ScenarioTeamV4 team
+    ) {
+        return ScenarioTeamMemberV4.builder()
+                .id(UUID.randomUUID().toString())
+                .scenario(scenario)
+                .student(student)
+                .team(team)
+                .assignedAt(LocalDateTime.now())
+                .assignedByType(ActorType.SYSTEM)
+                .build();
+    }
+
+    @Transactional
+    public void linkFireTeamAssignments(String scenarioId) {
+        ScenarioTeamV4 fireTeam = scenarioTeamRepositoryV4
+                .findByScenario_IdAndTeamCode(scenarioId, "FIRE")
+                .orElse(null);
+
+        if (fireTeam == null) {
+            System.out.println("⚠ FIRE 팀 없음 → TEAM assignment 연결 스킵");
+            return;
+        }
+
+        List<ScenarioAssignmentV4> assignments =
+                scenarioAssignmentRepositoryV4.findByScenario_IdOrderByCreatedAtAsc(scenarioId);
+
+        for (ScenarioAssignmentV4 assignment : assignments) {
+            if (assignment.getTargetType() == null) {
+                continue;
+            }
+
+            if (!"TEAM".equals(assignment.getTargetType().name())) {
+                continue;
+            }
+
+            if (assignment.getContent() == null || assignment.getContent().getTitle() == null) {
+                continue;
+            }
+
+            String title = assignment.getContent().getTitle();
+
+            if (title.startsWith("소화팀:")) {
+                assignment.setTargetTeam(fireTeam);
+            }
+        }
+
+        scenarioAssignmentRepositoryV4.saveAll(assignments);
     }
 }

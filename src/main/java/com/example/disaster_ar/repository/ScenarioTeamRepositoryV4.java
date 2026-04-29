@@ -11,4 +11,7 @@ public interface ScenarioTeamRepositoryV4 extends JpaRepository<ScenarioTeamV4, 
     List<ScenarioTeamV4> findByScenario_IdOrderByTeamCodeAsc(String scenarioId);
 
     Optional<ScenarioTeamV4> findByScenario_IdAndTeamCode(String scenarioId, String teamCode);
+
+    boolean existsByScenario_Id(String scenarioId);
+
 }

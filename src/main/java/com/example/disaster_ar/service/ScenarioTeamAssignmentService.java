@@ -85,7 +85,7 @@ public class ScenarioTeamAssignmentService {
                         .team(team)
                         .student(student)
                         .assignedAt(LocalDateTime.now())
-                        .assignedByType(ActorType.SYSTETM) // 현재 enum 오타가 SYSTETM이라 여기에 맞춤
+                        .assignedByType(ActorType.SYSTEM)
                         .build();
 
                 scenarioTeamMemberRepositoryV4.save(member);
