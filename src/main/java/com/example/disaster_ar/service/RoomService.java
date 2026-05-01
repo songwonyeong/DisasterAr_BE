@@ -226,6 +226,25 @@ public class RoomService {
                 .build();
     }
 
+    private ScenarioTeamV4 findOrCreateTeam(
+            ScenarioV4 scenario,
+            String teamCode,
+            String teamName
+    ) {
+        return scenarioTeamRepositoryV4
+                .findByScenario_IdAndTeamCode(scenario.getId(), teamCode)
+                .orElseGet(() -> {
+                    ScenarioTeamV4 team = ScenarioTeamV4.builder()
+                            .id(UUID.randomUUID().toString())
+                            .scenario(scenario)
+                            .teamCode(teamCode)
+                            .teamName(teamName)
+                            .build();
+
+                    return scenarioTeamRepositoryV4.save(team);
+                });
+    }
+
     public TrainingControlResponse endTraining(String classroomId) {
         ClassroomV4 classroom = classroomRepository.findById(classroomId)
                 .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
@@ -950,8 +969,8 @@ public class RoomService {
     @Transactional
     public void assignTeamsIfEmpty(String scenarioId, String classroomId) {
 
-        // 이미 팀 있으면 패스
-        if (scenarioTeamRepositoryV4.existsByScenario_Id(scenarioId)) {
+        // 이미 학생 팀 배정이 있으면 패스
+        if (scenarioTeamMemberRepositoryV4.existsByScenario_Id(scenarioId)) {
             return;
         }
 
@@ -963,56 +982,31 @@ public class RoomService {
             return;
         }
 
+        ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
+                .orElseThrow(() -> new IllegalArgumentException("시나리오가 존재하지 않습니다."));
+
+        ScenarioTeamV4 civilianTeam = findOrCreateTeam(scenario, "CIVILIAN", "시민");
+        ScenarioTeamV4 fireTeam = findOrCreateTeam(scenario, "FIRE", "소화팀");
+        ScenarioTeamV4 emergencyTeam = findOrCreateTeam(scenario, "EMERGENCY", "응급팀");
+
         int total = students.size();
 
         int civilianCount = (int) Math.round(total * 0.5);
         int fireCount = (int) Math.round(total * 0.3);
         int emergencyCount = total - civilianCount - fireCount;
 
-        ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
-                .orElseThrow();
-
-        // 팀 생성
-        ScenarioTeamV4 civilianTeam = ScenarioTeamV4.builder()
-                .id(UUID.randomUUID().toString())
-                .scenario(scenario)
-                .teamCode("CIVILIAN")
-                .teamName("시민")
-                .build();
-
-        ScenarioTeamV4 fireTeam = ScenarioTeamV4.builder()
-                .id(UUID.randomUUID().toString())
-                .scenario(scenario)
-                .teamCode("FIRE")
-                .teamName("소화팀")
-                .build();
-
-        ScenarioTeamV4 emergencyTeam = ScenarioTeamV4.builder()
-                .id(UUID.randomUUID().toString())
-                .scenario(scenario)
-                .teamCode("EMERGENCY")
-                .teamName("응급팀")
-                .build();
-
-        scenarioTeamRepositoryV4.saveAll(
-                List.of(civilianTeam, fireTeam, emergencyTeam)
-        );
-
         List<ScenarioTeamMemberV4> members = new ArrayList<>();
 
         int index = 0;
 
-        // 시민
         for (int i = 0; i < civilianCount && index < total; i++) {
             members.add(createMember(scenario, students.get(index++), civilianTeam));
         }
 
-        // 소화팀
         for (int i = 0; i < fireCount && index < total; i++) {
             members.add(createMember(scenario, students.get(index++), fireTeam));
         }
 
-        // 응급팀
         for (; index < total; index++) {
             members.add(createMember(scenario, students.get(index), emergencyTeam));
         }

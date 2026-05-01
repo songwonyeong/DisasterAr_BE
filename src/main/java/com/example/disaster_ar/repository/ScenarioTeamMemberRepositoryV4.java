@@ -22,4 +22,6 @@ public interface ScenarioTeamMemberRepositoryV4 extends JpaRepository<ScenarioTe
             String scenarioId,
             String studentId
     );
+
+    boolean existsByScenario_Id(String scenarioId);
 }
