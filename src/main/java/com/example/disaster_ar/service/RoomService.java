@@ -802,6 +802,26 @@ public class RoomService {
             return List.of();
         }
 
+        // active-assignments 조회 시점 보정
+        scenarioAssignmentService.createDefaultFireAssignmentsIfEmpty(
+                scenario.getId(),
+                classroom.getId()
+        );
+
+        assignTeamsIfEmpty(
+                scenario.getId(),
+                classroom.getId()
+        );
+
+        linkFireTeamAssignments(
+                scenario.getId()
+        );
+
+        createOnStartTriggers(
+                classroom,
+                scenario
+        );
+
         return scenarioTriggerRepositoryV4
                 .findByScenario_IdAndStudent_IdOrderByTriggeredAtDesc(scenario.getId(), student.getId())
                 .stream()
