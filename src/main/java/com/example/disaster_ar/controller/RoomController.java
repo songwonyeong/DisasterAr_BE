@@ -15,6 +15,8 @@ import com.example.disaster_ar.dto.room.ActiveMapUpdateRequest;
 import com.example.disaster_ar.dto.room.GameStartContextResponse;
 import com.example.disaster_ar.dto.room.ActiveAssignmentResponse;
 import java.util.*;
+import org.springframework.http.MediaType;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.example.disaster_ar.dto.room.CreateMapVersionFromChannelSetRequest;
 import com.example.disaster_ar.dto.room.RoomMapResponse;
@@ -244,15 +246,16 @@ public class RoomController {
     }
 
     @Operation(summary = "[26.04.30] 욜로 서버")
-    @PostMapping("/{classroomId}/yolo/detect")
+    @PostMapping(
+            value = "/{classroomId}/yolo/detect",
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE
+    )
     public ResponseEntity<?> detectYolo(
             @PathVariable String classroomId,
-            @RequestParam("image") MultipartFile image,
+            @RequestPart("image") MultipartFile image,
             @RequestParam(value = "conf", required = false) Double conf
     ) {
-
         Map<String, Object> result = yoloService.detect(image, conf);
-
         return ResponseEntity.ok(result);
     }
 }
