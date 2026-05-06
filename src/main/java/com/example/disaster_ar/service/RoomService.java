@@ -23,6 +23,10 @@ import com.example.disaster_ar.domain.v4.ScenarioTeamV4;
 import com.example.disaster_ar.domain.v4.ScenarioTeamMemberV4;
 import com.example.disaster_ar.domain.v4.enums.ActorType;
 import java.time.LocalDateTime;
+import com.example.disaster_ar.domain.v4.ContentV4;
+import com.example.disaster_ar.domain.v4.enums.ContentType;
+import java.util.Random;
+import java.util.LinkedHashMap;
 
 import java.util.*;
 
@@ -46,6 +50,7 @@ public class RoomService {
     private final ScenarioAssignmentService scenarioAssignmentService;
     private final ScenarioTeamRepositoryV4 scenarioTeamRepositoryV4;
     private final StudentRepositoryV4 studentRepositoryV4;
+    private final ContentRepository contentRepository;
 
     public RoomResponse createRoom(RoomCreateRequest req) {
 
@@ -200,6 +205,10 @@ public class RoomService {
         if (scenario.getClassroom() == null || !scenario.getClassroom().getId().equals(classroom.getId())) {
             throw new IllegalArgumentException("해당 시나리오는 이 교실 소속이 아닙니다.");
         }
+
+        applyDisasterOriginFromActiveMapIfNeeded(classroom, scenario);
+        applyRandomScenarioEventIfNeeded(scenario);
+        scenarioRepository.save(scenario);
 
         classroom.setTrainingState(TrainingState.RUNNING);
         classroom.setTrainingStartedAt(LocalDateTime.now());
@@ -414,9 +423,349 @@ public class RoomService {
                 .trainingStartedAt(classroom.getTrainingStartedAt())
                 .activeMapVersionId(mapVersion.getId())
                 .floorsJson(mapVersion.getFloorsJson())
+
+                .disasterOriginFloorIndex(scenario.getDisasterOriginFloorIndex())
+                .disasterOriginElementId(scenario.getDisasterOriginElementId())
+                .disasterOriginName(scenario.getDisasterOriginName())
+                .disasterMessage(buildDisasterMessage(scenario))
+
+                .scenarioEventContentId(
+                        scenario.getSelectedScenarioEventContent() != null
+                                ? scenario.getSelectedScenarioEventContent().getId()
+                                : null
+                )
+                .scenarioEventPlace(
+                        scenario.getSelectedScenarioEventContent() != null
+                                ? scenario.getSelectedScenarioEventContent().getPlace()
+                                : null
+                )
+                .scenarioEventReason(
+                        scenario.getSelectedScenarioEventContent() != null
+                                ? scenario.getSelectedScenarioEventContent().getReason()
+                                : null
+                )
+
                 .npcPositionsJson(scenario.getNpcPositionsJson())
                 .teamAssignmentJson(scenario.getTeamAssignmentJson())
                 .build();
+    }
+
+    private void applyRandomScenarioEventIfNeeded(ScenarioV4 scenario) {
+        if (scenario.getScenarioType() == null || !"FIRE".equals(scenario.getScenarioType().name())) {
+            return;
+        }
+
+        // 이미 선택된 이벤트가 있으면 다시 뽑지 않음
+        if (scenario.getSelectedScenarioEventContent() != null) {
+            return;
+        }
+
+        String originName = scenario.getDisasterOriginName();
+
+        List<ContentV4> candidates = findScenarioEventCandidates(originName);
+
+        if (candidates.isEmpty()) {
+            return;
+        }
+
+        ContentV4 selected = candidates.get(new Random().nextInt(candidates.size()));
+
+        scenario.setSelectedScenarioEventContent(selected);
+
+        Map<String, Object> aiDecision = new LinkedHashMap<>();
+        aiDecision.put("source", "SPRING_RANDOM_SCENARIO_EVENT");
+        aiDecision.put("matchedOriginName", originName);
+        aiDecision.put("selectedContentId", selected.getId());
+        aiDecision.put("place", selected.getPlace());
+        aiDecision.put("reason", selected.getReason());
+
+        try {
+            scenario.setAiDecisionJson(objectMapper.writeValueAsString(aiDecision));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private List<ContentV4> findScenarioEventCandidates(String originName) {
+        List<ContentV4> allEvents = contentRepository.findByContentType(ContentType.SCENARIO_EVENT);
+
+        if (allEvents == null || allEvents.isEmpty()) {
+            return List.of();
+        }
+
+        if (originName == null || originName.isBlank()) {
+            return allEvents;
+        }
+
+        String normalizedOrigin = normalizePlace(originName);
+
+        List<ContentV4> matched = allEvents.stream()
+                .filter(content -> {
+                    String place = normalizePlace(content.getPlace());
+
+                    if (place == null || place.isBlank()) {
+                        return false;
+                    }
+
+                    return normalizedOrigin.equals(place)
+                            || normalizedOrigin.contains(place)
+                            || place.contains(normalizedOrigin);
+                })
+                .toList();
+
+        // 장소 매칭 실패 시 전체 화재 이벤트 중 랜덤 fallback
+        return matched.isEmpty() ? allEvents : matched;
+    }
+
+    private String normalizePlace(String value) {
+        if (value == null) {
+            return "";
+        }
+
+        return value
+                .replace(" ", "")
+                .replace("1층", "")
+                .replace("2층", "")
+                .replace("3층", "")
+                .replace("4층", "")
+                .replace("5층", "")
+                .replace("층", "")
+                .trim();
+    }
+
+    private void applyDisasterOriginFromActiveMapIfNeeded(
+            ClassroomV4 classroom,
+            ScenarioV4 scenario
+    ) {
+        if (scenario.getScenarioType() == null || !"FIRE".equals(scenario.getScenarioType().name())) {
+            return;
+        }
+
+        // 이미 화재 위치가 있으면 다시 덮어쓰지 않음
+        if (scenario.getDisasterOriginElementId() != null && !scenario.getDisasterOriginElementId().isBlank()) {
+            return;
+        }
+
+        RoomMapVersionV4 mapVersion = classroom.getActiveMapVersion();
+        if (mapVersion == null || mapVersion.getFloorsJson() == null || mapVersion.getFloorsJson().isBlank()) {
+            return;
+        }
+
+        FireOriginCandidate candidate = findFireOriginCandidate(mapVersion.getFloorsJson());
+
+        if (candidate == null) {
+            return;
+        }
+
+        scenario.setDisasterOriginFloorIndex(candidate.floorIndex);
+        scenario.setDisasterOriginElementId(candidate.elementId);
+        scenario.setDisasterOriginName(candidate.name);
+        scenario.setLocation(candidate.floorLabel != null && !candidate.floorLabel.isBlank()
+                ? candidate.floorLabel + " " + candidate.name
+                : candidate.name
+        );
+    }
+
+    private FireOriginCandidate findFireOriginCandidate(String floorsJson) {
+        try {
+            Object root = objectMapper.readValue(floorsJson, Object.class);
+
+            List<?> floors;
+
+            if (root instanceof Map<?, ?> rootMap && rootMap.get("floors") instanceof List<?> list) {
+                floors = list;
+            } else if (root instanceof List<?> list) {
+                floors = list;
+            } else {
+                return null;
+            }
+
+            for (Object floorObj : floors) {
+                if (!(floorObj instanceof Map<?, ?> floor)) {
+                    continue;
+                }
+
+                Integer floorIndex = asInteger(firstNonNull(
+                        floor.get("floorIndex"),
+                        floor.get("floor_index")
+                ));
+
+                String floorLabel = asString(firstNonNull(
+                        floor.get("floorLabel"),
+                        floor.get("floor_label")
+                ));
+
+                Object elementsObj = firstNonNull(
+                        floor.get("elements"),
+                        floor.get("elementsJson"),
+                        floor.get("elements_json")
+                );
+
+                if (elementsObj instanceof String elementsString) {
+                    try {
+                        elementsObj = objectMapper.readValue(elementsString, Object.class);
+                    } catch (Exception ignored) {
+                        continue;
+                    }
+                }
+
+                if (!(elementsObj instanceof List<?> elements)) {
+                    continue;
+                }
+
+                for (Object elementObj : elements) {
+                    if (!(elementObj instanceof Map<?, ?> element)) {
+                        continue;
+                    }
+
+                    if (!isFireElement(element)) {
+                        continue;
+                    }
+
+                    String elementId = asString(firstNonNull(
+                            element.get("elementId"),
+                            element.get("element_id"),
+                            element.get("id")
+                    ));
+
+                    String name = asString(firstNonNull(
+                            element.get("name"),
+                            element.get("label"),
+                            element.get("elementName"),
+                            element.get("element_name")
+                    ));
+
+                    if (elementId == null || elementId.isBlank()) {
+                        elementId = name;
+                    }
+
+                    if (name == null || name.isBlank()) {
+                        name = elementId;
+                    }
+
+                    if (name == null || name.isBlank()) {
+                        name = "화재구역";
+                    }
+
+                    return new FireOriginCandidate(
+                            floorIndex != null ? floorIndex : 0,
+                            floorLabel,
+                            elementId,
+                            name
+                    );
+                }
+            }
+
+            return null;
+
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private boolean isFireElement(Map<?, ?> element) {
+        String elementType = asString(firstNonNull(
+                element.get("elementType"),
+                element.get("element_type"),
+                element.get("type")
+        ));
+
+        String name = asString(firstNonNull(
+                element.get("name"),
+                element.get("label"),
+                element.get("elementName"),
+                element.get("element_name")
+        ));
+
+        Object tagsObj = firstNonNull(
+                element.get("tags"),
+                element.get("tag"),
+                element.get("tagsJson"),
+                element.get("tags_json")
+        );
+
+        String merged = "";
+
+        if (elementType != null) {
+            merged += " " + elementType;
+        }
+        if (name != null) {
+            merged += " " + name;
+        }
+        if (tagsObj != null) {
+            merged += " " + tagsObj;
+        }
+
+        String upper = merged.toUpperCase();
+
+        return upper.contains("FIRE")
+                || upper.contains("DISASTER_ZONE")
+                || upper.contains("FIRE_ZONE")
+                || merged.contains("화재")
+                || merged.contains("위험구역")
+                || merged.contains("재난");
+    }
+
+    private Object firstNonNull(Object... values) {
+        for (Object value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private String asString(Object value) {
+        return value != null ? String.valueOf(value) : null;
+    }
+
+    private Integer asInteger(Object value) {
+        if (value == null) {
+            return null;
+        }
+
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String buildDisasterMessage(ScenarioV4 scenario) {
+        if (scenario.getScenarioType() == null || !"FIRE".equals(scenario.getScenarioType().name())) {
+            return null;
+        }
+
+        String locationText = null;
+
+        if (scenario.getLocation() != null && !scenario.getLocation().isBlank()) {
+            locationText = scenario.getLocation();
+        } else if (scenario.getDisasterOriginName() != null && !scenario.getDisasterOriginName().isBlank()) {
+            locationText = scenario.getDisasterOriginName();
+        }
+
+        if (locationText == null || locationText.isBlank()) {
+            return "화재가 발생했습니다.";
+        }
+
+        ContentV4 event = scenario.getSelectedScenarioEventContent();
+
+        if (event != null && event.getReason() != null && !event.getReason().isBlank()) {
+            return locationText + "에서 " + event.getReason();
+        }
+
+        return locationText + "에서 화재가 발생했습니다.";
+    }
+
+    private record FireOriginCandidate(
+            Integer floorIndex,
+            String floorLabel,
+            String elementId,
+            String name
+    ) {
     }
 
     public List<RoomMapVersionSummaryResponse> getMapVersions(String classroomId) {

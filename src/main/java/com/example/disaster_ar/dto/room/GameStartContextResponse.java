@@ -24,4 +24,14 @@ public class GameStartContextResponse {
 
     private String npcPositionsJson;
     private String teamAssignmentJson;
+
+    private Integer disasterOriginFloorIndex;
+    private String disasterOriginElementId;
+    private String disasterOriginName;
+    private String disasterMessage;
+
+    private String scenarioEventContentId;
+    private String scenarioEventPlace;
+    private String scenarioEventReason;
+
 }
