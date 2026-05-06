@@ -14,6 +14,9 @@ import com.example.disaster_ar.dto.scenario.TriggeredAssignmentResponse;
 import com.example.disaster_ar.dto.scenario.SimulateBeaconDetectRequest;
 import com.example.disaster_ar.dto.scenario.SimulateBeaconDetectResponse;
 import com.example.disaster_ar.service.ScenarioAdminService;
+import com.example.disaster_ar.dto.scenario.RandomQuizResponse;
+import com.example.disaster_ar.dto.scenario.TeamDistributionRequest;
+import com.example.disaster_ar.dto.scenario.TeamDistributionResponse;
 
 import java.util.List;
 import java.util.Map;
@@ -218,5 +221,13 @@ public class ScenarioController {
     public ResponseEntity<Void> deleteScenario(@PathVariable String scenarioId) {
         scenarioService.deleteScenario(scenarioId);
         return ResponseEntity.ok().build();
+    }
+
+    @Operation(summary = "[26.05.06] 랜덤 퀴즈 문제 조회")
+    @GetMapping("/{scenarioId}/random-quiz")
+    public ResponseEntity<RandomQuizResponse> getRandomQuiz(
+            @PathVariable String scenarioId
+    ) {
+        return ResponseEntity.ok(scenarioService.getRandomQuiz(scenarioId));
     }
 }

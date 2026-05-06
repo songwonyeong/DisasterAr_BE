@@ -7,12 +7,13 @@ import com.example.disaster_ar.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.example.disaster_ar.domain.v4.ContentV4;
+import com.example.disaster_ar.domain.v4.enums.ContentType;
+import com.example.disaster_ar.dto.scenario.RandomQuizResponse;
+import com.example.disaster_ar.repository.ContentRepository;
 
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 @Service
 @RequiredArgsConstructor
@@ -32,6 +33,9 @@ public class ScenarioService {
     private final EvaluationRepositoryV4 evaluationRepositoryV4;
     private final TeamMissionStepProgressRepositoryV4 teamMissionStepProgressRepositoryV4;
     private final TeamMissionProgressRepositoryV4 teamMissionProgressRepositoryV4;
+    private final ContentRepository contentRepository;
+    private final StudentRepositoryV4 studentRepositoryV4;
+    private final ScenarioTeamRepositoryV4 scenarioTeamRepositoryV4;
 
     public ScenarioResponse create(ScenarioCreateRequest req) {
         ClassroomV4 classroom = classroomRepository.findById(req.getClassroomId())
@@ -859,5 +863,30 @@ public class ScenarioService {
         classroomRepository.clearActiveScenarioByScenarioId(scenarioId);
 
         scenarioRepository.delete(scenario);
+    }
+
+    public RandomQuizResponse getRandomQuiz(String scenarioId) {
+
+        // scenarioId 유효성 확인
+        scenarioRepository.findById(scenarioId)
+                .orElseThrow(() -> new IllegalArgumentException("시나리오가 존재하지 않습니다."));
+
+        List<ContentV4> quizzes = contentRepository.findByContentType(ContentType.QUIZ);
+
+        if (quizzes == null || quizzes.isEmpty()) {
+            throw new IllegalArgumentException("등록된 퀴즈 문제가 없습니다.");
+        }
+
+        ContentV4 quiz = quizzes.get(new Random().nextInt(quizzes.size()));
+
+        return RandomQuizResponse.builder()
+                .contentId(quiz.getId())
+                .quizType(quiz.getQuizType() != null ? quiz.getQuizType().name() : null)
+                .question(quiz.getQuestion())
+                .option1(quiz.getOption1())
+                .option2(quiz.getOption2())
+                .option3(quiz.getOption3())
+                .option4(quiz.getOption4())
+                .build();
     }
 }

@@ -428,6 +428,7 @@ public class RoomService {
                 .disasterOriginElementId(scenario.getDisasterOriginElementId())
                 .disasterOriginName(scenario.getDisasterOriginName())
                 .disasterMessage(buildDisasterMessage(scenario))
+                .warningMessage(buildWarningMessage(classroom, scenario))
 
                 .scenarioEventContentId(
                         scenario.getSelectedScenarioEventContent() != null
@@ -579,6 +580,8 @@ public class RoomService {
                 return null;
             }
 
+            List<FireOriginCandidate> candidates = new ArrayList<>();
+
             for (Object floorObj : floors) {
                 if (!(floorObj instanceof Map<?, ?> floor)) {
                     continue;
@@ -646,16 +649,31 @@ public class RoomService {
                         name = "화재구역";
                     }
 
-                    return new FireOriginCandidate(
+                    candidates.add(new FireOriginCandidate(
                             floorIndex != null ? floorIndex : 0,
                             floorLabel,
                             elementId,
                             name
-                    );
+                    ));
                 }
             }
 
-            return null;
+            if (candidates.isEmpty()) {
+                System.out.println("🔥 화재구역 후보 없음");
+                return null;
+            }
+
+            System.out.println("🔥 화재구역 후보 개수 = " + candidates.size());
+
+            for (FireOriginCandidate c : candidates) {
+                System.out.println("🔥 후보 = " + c.elementId() + " / " + c.name());
+            }
+
+            FireOriginCandidate selected = candidates.get(new Random().nextInt(candidates.size()));
+
+            System.out.println("🔥 선택된 화재구역 = " + selected.elementId() + " / " + selected.name());
+
+            return selected;
 
         } catch (Exception e) {
             return null;
@@ -1399,48 +1417,96 @@ public class RoomService {
             return;
         }
 
-        List<StudentV4> students = studentRepositoryV4
-                .findByClassroom_IdOrderByJoinedAtAsc(classroomId);
+        ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
+                .orElseThrow(() -> new IllegalArgumentException("시나리오가 존재하지 않습니다."));
+
+        List<StudentV4> students = new ArrayList<>(
+                studentRepositoryV4.findByClassroom_IdOrderByJoinedAtAsc(classroomId)
+                        .stream()
+                        .filter(s -> !Boolean.TRUE.equals(s.getIsKicked()))
+                        .toList()
+        );
 
         if (students.isEmpty()) {
             System.out.println("⚠ 학생 없음 → 팀 배정 스킵");
             return;
         }
 
-        ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
-                .orElseThrow(() -> new IllegalArgumentException("시나리오가 존재하지 않습니다."));
+        List<ScenarioTeamV4> teams = scenarioTeamRepositoryV4
+                .findByScenario_IdOrderByTeamCodeAsc(scenarioId);
 
-        ScenarioTeamV4 civilianTeam = findOrCreateTeam(scenario, "CIVILIAN", "시민");
-        ScenarioTeamV4 fireTeam = findOrCreateTeam(scenario, "FIRE", "소화팀");
-        ScenarioTeamV4 emergencyTeam = findOrCreateTeam(scenario, "EMERGENCY", "응급팀");
+        // team-distribution API를 안 불렀다면 기존처럼 AUTO로 생성
+        if (teams == null || teams.isEmpty()) {
+            int total = students.size();
 
-        int total = students.size();
+            int civilianCount = (total * 5) / 10;
+            int fireCount = (total * 3) / 10;
+            int emergencyCount = total - civilianCount - fireCount;
 
-        int civilianCount = (int) Math.round(total * 0.5);
-        int fireCount = (int) Math.round(total * 0.3);
-        int emergencyCount = total - civilianCount - fireCount;
+            ScenarioTeamV4 civilianTeam = findOrCreateTeamWithMaxMembers(
+                    scenario, "CIVILIAN", "시민", civilianCount
+            );
+            ScenarioTeamV4 fireTeam = findOrCreateTeamWithMaxMembers(
+                    scenario, "FIRE", "소화팀", fireCount
+            );
+            ScenarioTeamV4 emergencyTeam = findOrCreateTeamWithMaxMembers(
+                    scenario, "EMERGENCY", "응급팀", emergencyCount
+            );
+
+            teams = List.of(civilianTeam, fireTeam, emergencyTeam);
+        }
+
+        Collections.shuffle(students);
+
+        int totalMax = teams.stream()
+                .mapToInt(t -> t.getMaxMembers() != null ? t.getMaxMembers() : 0)
+                .sum();
+
+        if (totalMax != students.size()) {
+            throw new IllegalArgumentException(
+                    "팀별 maxMembers 합계와 학생 수가 일치하지 않습니다. maxMembers="
+                            + totalMax + ", students=" + students.size()
+            );
+        }
 
         List<ScenarioTeamMemberV4> members = new ArrayList<>();
 
         int index = 0;
 
-        for (int i = 0; i < civilianCount && index < total; i++) {
-            members.add(createMember(scenario, students.get(index++), civilianTeam));
-        }
+        for (ScenarioTeamV4 team : teams) {
+            int count = team.getMaxMembers() != null ? team.getMaxMembers() : 0;
 
-        for (int i = 0; i < fireCount && index < total; i++) {
-            members.add(createMember(scenario, students.get(index++), fireTeam));
-        }
-
-        for (; index < total; index++) {
-            members.add(createMember(scenario, students.get(index), emergencyTeam));
+            for (int i = 0; i < count && index < students.size(); i++) {
+                members.add(createMember(scenario, students.get(index++), team));
+            }
         }
 
         scenarioTeamMemberRepositoryV4.saveAll(members);
 
-        System.out.println("🔥 팀 배정 완료: 시민=" + civilianCount
-                + ", 소화=" + fireCount
-                + ", 응급=" + emergencyCount);
+        System.out.println("🔥 팀 배정 완료: " + members.size() + "명");
+    }
+
+    private ScenarioTeamV4 findOrCreateTeamWithMaxMembers(
+            ScenarioV4 scenario,
+            String teamCode,
+            String teamName,
+            Integer maxMembers
+    ) {
+        ScenarioTeamV4 team = scenarioTeamRepositoryV4
+                .findByScenario_IdAndTeamCode(scenario.getId(), teamCode)
+                .orElseGet(() -> ScenarioTeamV4.builder()
+                        .id(UUID.randomUUID().toString())
+                        .scenario(scenario)
+                        .teamCode(teamCode)
+                        .teamName(teamName)
+                        .build()
+                );
+
+        team.setTeamName(teamName);
+        team.setMaxMembers(maxMembers);
+        team.setMinMembers(0);
+
+        return scenarioTeamRepositoryV4.save(team);
     }
 
     private ScenarioTeamMemberV4 createMember(
@@ -1493,5 +1559,25 @@ public class RoomService {
         }
 
         scenarioAssignmentRepositoryV4.saveAll(assignments);
+    }
+
+    private String buildWarningMessage(ClassroomV4 classroom, ScenarioV4 scenario) {
+        if (scenario.getScenarioType() == null || !"FIRE".equals(scenario.getScenarioType().name())) {
+            return null;
+        }
+
+        if (classroom.getActiveMapVersion() == null) {
+            return "활성 구조도가 설정되어 있지 않아 화재구역을 자동 매핑하지 못했습니다.";
+        }
+
+        if (scenario.getDisasterOriginElementId() == null || scenario.getDisasterOriginElementId().isBlank()) {
+            return "활성 구조도에서 화재구역을 찾지 못했습니다.";
+        }
+
+        if (scenario.getSelectedScenarioEventContent() == null) {
+            return "화재구역은 찾았지만 해당 장소에 맞는 시나리오 이벤트를 찾지 못했습니다.";
+        }
+
+        return null;
     }
 }

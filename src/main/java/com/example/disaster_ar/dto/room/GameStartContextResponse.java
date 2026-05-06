@@ -34,4 +34,6 @@ public class GameStartContextResponse {
     private String scenarioEventPlace;
     private String scenarioEventReason;
 
+    private String warningMessage;
+
 }

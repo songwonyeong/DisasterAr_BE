@@ -42,8 +42,8 @@ public class ScenarioTeamDistributionService {
             throw new IllegalArgumentException("배정할 학생이 없습니다.");
         }
 
-        String mode = req != null && req.getDistributionMode() != null
-                ? req.getDistributionMode()
+        String mode = req != null && req.getMode() != null
+                ? req.getMode()
                 : "AUTO";
 
         List<TeamDistributionResponse.TeamResult> results;

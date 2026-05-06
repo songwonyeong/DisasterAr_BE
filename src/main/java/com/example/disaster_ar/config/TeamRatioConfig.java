@@ -15,9 +15,9 @@ public class TeamRatioConfig {
 
     public static final Map<ScenarioType, List<TeamRatio>> TEAM_RATIO_BY_SCENARIO = Map.of(
             ScenarioType.FIRE, List.of(
-                    new TeamRatio("CIVILIAN", "시민팀", 5),
-                    new TeamRatio("FIRE_FIGHT", "소화팀", 3),
-                    new TeamRatio("FIRST_AID", "응급처치팀", 2)
+                    new TeamRatio("CIVILIAN", "시민", 5),
+                    new TeamRatio("FIRE", "소화팀", 3),
+                    new TeamRatio("EMERGENCY", "응급팀", 2)
             ),
             ScenarioType.EARTHQUAKE, List.of(
                     new TeamRatio("EVAC", "대피팀", 6),
