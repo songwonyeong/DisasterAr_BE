@@ -11,10 +11,19 @@ public class ActiveAssignmentResponse {
     private String triggerId;
     private String assignmentId;
     private String assignmentType;
+
     private String contentId;
     private String title;
     private String description;
+
+    private String targetType;
+    private String targetTeamId;
+
     private Integer floorIndex;
     private String beaconId;
+
+    private String paramsJson;
+    private String missionCode;
+
     private LocalDateTime triggeredAt;
 }

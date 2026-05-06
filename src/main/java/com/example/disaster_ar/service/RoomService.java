@@ -850,6 +850,25 @@ public class RoomService {
                             .contentId(contentId)
                             .title(title)
                             .description(description)
+
+                            // 여기 추가
+                            .targetType(
+                                    assignment != null && assignment.getTargetType() != null
+                                            ? assignment.getTargetType().name()
+                                            : null
+                            )
+                            .targetTeamId(
+                                    assignment != null && assignment.getTargetTeam() != null
+                                            ? assignment.getTargetTeam().getId()
+                                            : null
+                            )
+                            .paramsJson(
+                                    assignment != null ? assignment.getParamsJson() : null
+                            )
+                            .missionCode(
+                                    assignment != null ? extractMissionCode(assignment.getParamsJson(), title) : null
+                            )
+
                             .floorIndex(assignment != null ? assignment.getFloorIndex() : null)
                             .beaconId(
                                     assignment != null && assignment.getBeacon() != null
@@ -858,8 +877,45 @@ public class RoomService {
                             )
                             .triggeredAt(trigger.getTriggeredAt())
                             .build();
-                })
+                    })
                 .toList();
+    }
+
+    private String extractMissionCode(String paramsJson, String title) {
+        if (paramsJson != null && !paramsJson.isBlank()) {
+            try {
+                Map<?, ?> map = objectMapper.readValue(paramsJson, Map.class);
+                Object missionCode = map.get("missionCode");
+                if (missionCode != null) {
+                    return String.valueOf(missionCode);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
+        if ("랜덤 퀴즈 3개 이상 맞추기".equals(title)) {
+            return "COMMON_RANDOM_QUIZ";
+        }
+        if ("119 신고 순서 맞추기".equals(title)) {
+            return "COMMON_REPORT_CALL";
+        }
+        if ("소화기 찾기".equals(title)) {
+            return "COMMON_FIND_EXTINGUISHER";
+        }
+        if ("제한 시간 내 안전구역 도착".equals(title)) {
+            return "COMMON_SAFE_ZONE";
+        }
+        if ("소화팀: 소화기 획득".equals(title)) {
+            return "FIRETEAM_GET_EXTINGUISHER";
+        }
+        if ("소화팀: 소화기 사용 퀴즈".equals(title)) {
+            return "FIRETEAM_EXTINGUISHER_QUIZ";
+        }
+        if ("소화팀: 도넛 게임으로 불 끄기".equals(title)) {
+            return "FIRETEAM_PUT_OUT_FIRE";
+        }
+
+        return null;
     }
 
     @Transactional

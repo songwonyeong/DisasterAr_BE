@@ -167,7 +167,7 @@ public class ScenarioAssignmentService {
                 AssignmentType.QUIZ,
                 TargetType.ALL,
                 floorIndex,
-                "{\"activationType\":\"ON_START\",\"score\":8,\"requiredCorrectCount\":3,\"totalQuizCount\":5}"
+                "{\"activationType\":\"ON_START\",\"score\":8,\"missionCode\":\"COMMON_RANDOM_QUIZ\",\"requiredCorrectCount\":3,\"totalQuizCount\":5}"
         ));
 
         assignments.add(createDefaultAssignment(
@@ -276,15 +276,19 @@ public class ScenarioAssignmentService {
     }
 
     private ContentV4 createMissionContent(String title, String description) {
-        ContentV4 content = ContentV4.builder()
-                .id(UUID.randomUUID().toString())
-                .contentType(ContentType.MISSION)
-                .missionScope(MissionScope.INDIVIDUAL)
-                .title(title)
-                .description(description)
-                .build();
+        return contentRepository
+                .findByContentTypeAndTitle(ContentType.MISSION, title)
+                .orElseGet(() -> {
+                    ContentV4 content = ContentV4.builder()
+                            .id(UUID.randomUUID().toString())
+                            .contentType(ContentType.MISSION)
+                            .missionScope(MissionScope.INDIVIDUAL)
+                            .title(title)
+                            .description(description)
+                            .build();
 
-        return contentRepository.save(content);
+                    return contentRepository.save(content);
+                });
     }
 
     private ScenarioAssignmentV4 createDefaultAssignment(
