@@ -6,7 +6,11 @@ import com.example.disaster_ar.domain.v4.enums.ContentType;
 import java.util.*;
 
 public interface ContentRepository extends JpaRepository<ContentV4, String> {
-    Optional<ContentV4> findByContentTypeAndTitle(ContentType contentType, String title);
+
+    List<ContentV4> findByContentTypeAndTitleOrderByIdAsc(
+            ContentType contentType,
+            String title
+    );
 
     List<ContentV4> findByContentTypeAndPlace(ContentType contentType, String place);
 

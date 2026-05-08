@@ -276,19 +276,25 @@ public class ScenarioAssignmentService {
     }
 
     private ContentV4 createMissionContent(String title, String description) {
-        return contentRepository
-                .findByContentTypeAndTitle(ContentType.MISSION, title)
-                .orElseGet(() -> {
-                    ContentV4 content = ContentV4.builder()
-                            .id(UUID.randomUUID().toString())
-                            .contentType(ContentType.MISSION)
-                            .missionScope(MissionScope.INDIVIDUAL)
-                            .title(title)
-                            .description(description)
-                            .build();
+        List<ContentV4> existingContents =
+                contentRepository.findByContentTypeAndTitleOrderByIdAsc(
+                        ContentType.MISSION,
+                        title
+                );
 
-                    return contentRepository.save(content);
-                });
+        if (existingContents != null && !existingContents.isEmpty()) {
+            return existingContents.get(0);
+        }
+
+        ContentV4 content = ContentV4.builder()
+                .id(UUID.randomUUID().toString())
+                .contentType(ContentType.MISSION)
+                .missionScope(MissionScope.INDIVIDUAL)
+                .title(title)
+                .description(description)
+                .build();
+
+        return contentRepository.save(content);
     }
 
     private ScenarioAssignmentV4 createDefaultAssignment(
