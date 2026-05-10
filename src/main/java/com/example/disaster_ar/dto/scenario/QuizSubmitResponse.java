@@ -17,9 +17,18 @@ public class QuizSubmitResponse {
     private String scenarioId;
     private String assignmentId;
     private String studentId;
+
+    private String contentId;
+
     private Integer selectedAnswer;
     private Integer correctAnswer;
     private Boolean isCorrect;
     private String status;
     private LocalDateTime submittedAt;
+
+    private Integer submittedCount;
+    private Integer correctCount;
+    private Integer requiredCorrectCount;
+    private Integer totalQuizCount;
+    private Boolean missionCompleted;
 }

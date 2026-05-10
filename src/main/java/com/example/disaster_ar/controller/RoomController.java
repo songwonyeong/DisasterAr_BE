@@ -21,6 +21,7 @@ import org.springframework.web.multipart.MultipartFile;
 import com.example.disaster_ar.dto.room.CreateMapVersionFromChannelSetRequest;
 import com.example.disaster_ar.dto.room.RoomMapResponse;
 import org.springframework.web.multipart.MultipartFile;
+import java.util.LinkedHashMap;
 
 @Tag(name = "Room")
 @RestController
@@ -245,7 +246,7 @@ public class RoomController {
         return ResponseEntity.ok().build();
     }
 
-    @Operation(summary = "[26.04.30] 욜로 서버")
+    @Operation(summary = "[26.05.10] YOLO 객체 인식 및 소화기 미션 완료 처리")
     @PostMapping(
             value = "/{classroomId}/yolo/detect",
             consumes = MediaType.MULTIPART_FORM_DATA_VALUE
@@ -253,9 +254,25 @@ public class RoomController {
     public ResponseEntity<?> detectYolo(
             @PathVariable String classroomId,
             @RequestPart("image") MultipartFile image,
-            @RequestParam(value = "conf", required = false) Double conf
+            @RequestParam(value = "conf", required = false) Double conf,
+            @RequestParam(value = "studentId", required = false) String studentId,
+            @RequestParam(value = "assignmentId", required = false) String assignmentId,
+            @RequestParam(value = "completeMission", defaultValue = "false") Boolean completeMission
     ) {
-        Map<String, Object> result = yoloService.detect(image, conf);
+        Map<String, Object> result = new LinkedHashMap<>(yoloService.detect(image, conf));
+
+        if (Boolean.TRUE.equals(completeMission)) {
+            Map<String, Object> missionResult =
+                    roomService.completeYoloExtinguisherMissionIfDetected(
+                            classroomId,
+                            studentId,
+                            assignmentId,
+                            result
+                    );
+
+            result.put("mission", missionResult);
+        }
+
         return ResponseEntity.ok(result);
     }
 }

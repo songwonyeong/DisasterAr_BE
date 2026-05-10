@@ -17,6 +17,9 @@ import com.example.disaster_ar.service.ScenarioAdminService;
 import com.example.disaster_ar.dto.scenario.RandomQuizResponse;
 import com.example.disaster_ar.dto.scenario.TeamDistributionRequest;
 import com.example.disaster_ar.dto.scenario.TeamDistributionResponse;
+import com.example.disaster_ar.dto.scenario.CallQuizResponse;
+import com.example.disaster_ar.dto.scenario.CallSubmitRequest;
+import com.example.disaster_ar.dto.scenario.CallSubmitResponse;
 
 import java.util.List;
 import java.util.Map;
@@ -226,8 +229,33 @@ public class ScenarioController {
     @Operation(summary = "[26.05.06] 랜덤 퀴즈 문제 조회")
     @GetMapping("/{scenarioId}/random-quiz")
     public ResponseEntity<RandomQuizResponse> getRandomQuiz(
+            @PathVariable String scenarioId,
+            @RequestParam(required = false) String studentId,
+            @RequestParam(required = false) String assignmentId
+    ) {
+        return ResponseEntity.ok(
+                scenarioService.getRandomQuiz(scenarioId, studentId, assignmentId)
+        );
+    }
+
+    @Operation(summary = "[26.05.10] 전화미션 카드 조회")
+    @GetMapping("/{scenarioId}/call/quiz")
+    public ResponseEntity<CallQuizResponse> getCallQuiz(
             @PathVariable String scenarioId
     ) {
-        return ResponseEntity.ok(scenarioService.getRandomQuiz(scenarioId));
+        return ResponseEntity.ok(
+                scenarioService.getCallQuiz(scenarioId)
+        );
+    }
+
+    @Operation(summary = "[26.05.10] 전화미션 순서 제출")
+    @PostMapping("/{scenarioId}/call/submit")
+    public ResponseEntity<CallSubmitResponse> submitCallMission(
+            @PathVariable String scenarioId,
+            @RequestBody CallSubmitRequest req
+    ) {
+        return ResponseEntity.ok(
+                scenarioService.submitCallMission(scenarioId, req)
+        );
     }
 }

@@ -27,6 +27,14 @@ import com.example.disaster_ar.domain.v4.ContentV4;
 import com.example.disaster_ar.domain.v4.enums.ContentType;
 import java.util.Random;
 import java.util.LinkedHashMap;
+import com.example.disaster_ar.domain.v4.ItemV4;
+import com.example.disaster_ar.domain.v4.StudentItemV4;
+import com.example.disaster_ar.domain.v4.StudentMissionProgressV4;
+import com.example.disaster_ar.domain.v4.ScenarioActionEventV4;
+
+import com.example.disaster_ar.domain.v4.enums.AcquiredSource;
+import com.example.disaster_ar.domain.v4.enums.ProgressStatus;
+import com.example.disaster_ar.domain.v4.enums.ScenarioActionType;
 
 import java.util.*;
 
@@ -51,6 +59,10 @@ public class RoomService {
     private final ScenarioTeamRepositoryV4 scenarioTeamRepositoryV4;
     private final StudentRepositoryV4 studentRepositoryV4;
     private final ContentRepository contentRepository;
+    private final StudentMissionProgressRepositoryV4 studentMissionProgressRepository;
+    private final ItemRepositoryV4 itemRepositoryV4;
+    private final StudentItemRepositoryV4 studentItemRepositoryV4;
+    private final ScenarioActionEventRepositoryV4 scenarioActionEventRepositoryV4;
 
     public RoomResponse createRoom(RoomCreateRequest req) {
 
@@ -1195,7 +1207,6 @@ public class RoomService {
                 .map(trigger -> {
                     ScenarioAssignmentV4 assignment = trigger.getAssignment();
 
-                    // content 연관관계가 있다면 사용
                     String contentId = null;
                     String title = null;
                     String description = null;
@@ -1205,6 +1216,13 @@ public class RoomService {
                         title = assignment.getContent().getTitle();
                         description = assignment.getContent().getDescription();
                     }
+
+                    MissionProgressView progressView = resolveMissionProgress(
+                            scenario,
+                            assignment,
+                            student,
+                            trigger
+                    );
 
                     return ActiveAssignmentResponse.builder()
                             .triggerId(trigger.getId())
@@ -1218,7 +1236,6 @@ public class RoomService {
                             .title(title)
                             .description(description)
 
-                            // 여기 추가
                             .targetType(
                                     assignment != null && assignment.getTargetType() != null
                                             ? assignment.getTargetType().name()
@@ -1236,6 +1253,10 @@ public class RoomService {
                                     assignment != null ? extractMissionCode(assignment.getParamsJson(), title) : null
                             )
 
+                            .requiredCount(progressView.requiredCount())
+                            .progressCount(progressView.progressCount())
+                            .status(progressView.status())
+
                             .floorIndex(assignment != null ? assignment.getFloorIndex() : null)
                             .beaconId(
                                     assignment != null && assignment.getBeacon() != null
@@ -1244,8 +1265,96 @@ public class RoomService {
                             )
                             .triggeredAt(trigger.getTriggeredAt())
                             .build();
-                    })
+                })
                 .toList();
+    }
+
+    private MissionProgressView resolveMissionProgress(
+            ScenarioV4 scenario,
+            ScenarioAssignmentV4 assignment,
+            StudentV4 student,
+            ScenarioTriggerV4 trigger
+    ) {
+        if (scenario == null || assignment == null || student == null) {
+            return new MissionProgressView(1, 0, normalizeTriggerStatus(trigger != null ? trigger.getStatus() : null));
+        }
+
+        return studentMissionProgressRepository
+                .findByScenario_IdAndAssignment_IdAndStudent_Id(
+                        scenario.getId(),
+                        assignment.getId(),
+                        student.getId()
+                )
+                .map(progress -> new MissionProgressView(
+                        progress.getRequiredCount() != null ? progress.getRequiredCount() : resolveDefaultRequiredCount(assignment),
+                        progress.getProgressCount() != null ? progress.getProgressCount() : 0,
+                        progress.getStatus() != null ? progress.getStatus().name() : normalizeTriggerStatus(trigger.getStatus())
+                ))
+                .orElseGet(() -> new MissionProgressView(
+                        resolveDefaultRequiredCount(assignment),
+                        0,
+                        normalizeTriggerStatus(trigger.getStatus())
+                ));
+    }
+
+    private Integer resolveDefaultRequiredCount(ScenarioAssignmentV4 assignment) {
+        if (assignment == null) {
+            return 1;
+        }
+
+        String missionCode = extractMissionCode(
+                assignment.getParamsJson(),
+                assignment.getContent() != null ? assignment.getContent().getTitle() : null
+        );
+
+        if ("COMMON_RANDOM_QUIZ".equals(missionCode)) {
+            return getIntParam(assignment.getParamsJson(), "requiredCorrectCount", 3);
+        }
+
+        return getIntParam(assignment.getParamsJson(), "requiredCount", 1);
+    }
+
+    private String normalizeTriggerStatus(String triggerStatus) {
+        if (triggerStatus == null || triggerStatus.isBlank()) {
+            return "IN_PROGRESS";
+        }
+
+        if ("TRIGGERED".equalsIgnoreCase(triggerStatus)) {
+            return "IN_PROGRESS";
+        }
+
+        return triggerStatus;
+    }
+
+    private int getIntParam(String paramsJson, String key, int defaultValue) {
+        if (paramsJson == null || paramsJson.isBlank()) {
+            return defaultValue;
+        }
+
+        try {
+            Map<?, ?> map = objectMapper.readValue(paramsJson, Map.class);
+
+            Object value = map.get(key);
+
+            if (value instanceof Number number) {
+                return number.intValue();
+            }
+
+            if (value != null) {
+                return Integer.parseInt(String.valueOf(value));
+            }
+
+            return defaultValue;
+        } catch (Exception e) {
+            return defaultValue;
+        }
+    }
+
+    private record MissionProgressView(
+            Integer requiredCount,
+            Integer progressCount,
+            String status
+    ) {
     }
 
     private String extractMissionCode(String paramsJson, String title) {
@@ -1580,4 +1689,265 @@ public class RoomService {
 
         return null;
     }
+
+    @Transactional
+    public Map<String, Object> completeYoloExtinguisherMissionIfDetected(
+            String classroomId,
+            String studentId,
+            String assignmentId,
+            Map<String, Object> yoloResult
+    ) {
+        if (studentId == null || studentId.isBlank()) {
+            throw new IllegalArgumentException("studentId는 필수입니다.");
+        }
+
+        if (assignmentId == null || assignmentId.isBlank()) {
+            throw new IllegalArgumentException("assignmentId는 필수입니다.");
+        }
+
+        boolean detected = isYoloDetected(yoloResult);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("detected", detected);
+
+        if (!detected) {
+            result.put("missionCompleted", false);
+            result.put("itemAcquired", false);
+            result.put("message", "소화기가 인식되지 않았습니다.");
+            return result;
+        }
+
+        ClassroomV4 classroom = classroomRepository.findById(classroomId)
+                .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
+
+        ScenarioV4 scenario = classroom.getActiveScenario();
+        if (scenario == null) {
+            throw new IllegalArgumentException("현재 활성 시나리오가 없습니다.");
+        }
+
+        StudentV4 student = studentRepository.findById(studentId)
+                .orElseThrow(() -> new IllegalArgumentException("학생이 존재하지 않습니다."));
+
+        if (student.getClassroom() == null ||
+                !student.getClassroom().getId().equals(classroom.getId())) {
+            throw new IllegalArgumentException("해당 학생은 이 교실 소속이 아닙니다.");
+        }
+
+        ScenarioAssignmentV4 assignment = scenarioAssignmentRepositoryV4.findById(assignmentId)
+                .orElseThrow(() -> new IllegalArgumentException("assignment가 존재하지 않습니다."));
+
+        if (assignment.getScenario() == null ||
+                !assignment.getScenario().getId().equals(scenario.getId())) {
+            throw new IllegalArgumentException("해당 assignment는 현재 시나리오 소속이 아닙니다.");
+        }
+
+        String title = assignment.getContent() != null
+                ? assignment.getContent().getTitle()
+                : null;
+
+        String missionCode = extractMissionCode(assignment.getParamsJson(), title);
+
+        if (!"COMMON_FIND_EXTINGUISHER".equals(missionCode)
+                && !"FIRETEAM_GET_EXTINGUISHER".equals(missionCode)) {
+            throw new IllegalArgumentException("소화기 획득/찾기 미션이 아닙니다. missionCode=" + missionCode);
+        }
+
+        ItemV4 extinguisher = findOrCreateExtinguisherItem();
+
+        boolean alreadyAcquired = studentItemRepositoryV4
+                .findByScenario_IdAndStudent_IdAndItem_Id(
+                        scenario.getId(),
+                        student.getId(),
+                        extinguisher.getId()
+                )
+                .isPresent();
+
+        boolean alreadyMissionCompleted = studentMissionProgressRepository
+                .findByScenario_IdAndAssignment_IdAndStudent_Id(
+                        scenario.getId(),
+                        assignment.getId(),
+                        student.getId()
+                )
+                .map(progress -> progress.getStatus() == ProgressStatus.COMPLETED)
+                .orElse(false);
+
+        if (!alreadyAcquired) {
+            StudentItemV4 item = StudentItemV4.builder()
+                    .id(UUID.randomUUID().toString())
+                    .scenario(scenario)
+                    .student(student)
+                    .item(extinguisher)
+                    .quantity(1)
+                    .acquiredAt(LocalDateTime.now())
+                    .acquiredSource(AcquiredSource.MISSION)
+                    .isConsumed(false)
+                    .build();
+
+            studentItemRepositoryV4.save(item);
+        }
+
+        upsertStudentMissionProgressForRoom(
+                scenario,
+                assignment,
+                student,
+                1,
+                1,
+                ProgressStatus.COMPLETED
+        );
+
+        scenarioTriggerRepositoryV4
+                .findByScenario_IdAndStudent_IdAndAssignment_Id(
+                        scenario.getId(),
+                        student.getId(),
+                        assignment.getId()
+                )
+                .ifPresent(trigger -> {
+                    trigger.setStatus("COMPLETED");
+                    scenarioTriggerRepositoryV4.save(trigger);
+                });
+
+        if (!alreadyAcquired) {
+            ScenarioActionEventV4 pickupEvent = ScenarioActionEventV4.builder()
+                    .id(UUID.randomUUID().toString())
+                    .scenario(scenario)
+                    .classroom(classroom)
+                    .student(student)
+                    .actionType(ScenarioActionType.PICKUP_ITEM)
+                    .valueText("FIRE_EXTINGUISHER")
+                    .metaJson(buildYoloMissionMetaJson(assignment, missionCode, yoloResult, alreadyAcquired))
+                    .createdAt(LocalDateTime.now())
+                    .build();
+
+            scenarioActionEventRepositoryV4.save(pickupEvent);
+        }
+
+        if (!alreadyMissionCompleted) {
+            ScenarioActionEventV4 completeEvent = ScenarioActionEventV4.builder()
+                    .id(UUID.randomUUID().toString())
+                    .scenario(scenario)
+                    .classroom(classroom)
+                    .student(student)
+                    .actionType(ScenarioActionType.MISSION_COMPLETE)
+                    .valueText(missionCode)
+                    .metaJson(buildYoloMissionMetaJson(assignment, missionCode, yoloResult, alreadyAcquired))
+                    .createdAt(LocalDateTime.now())
+                    .build();
+
+            scenarioActionEventRepositoryV4.save(completeEvent);
+        }
+
+        result.put("missionCompleted", true);
+        result.put("itemAcquired", !alreadyAcquired);
+        result.put("alreadyAcquired", alreadyAcquired);
+        result.put("alreadyMissionCompleted", alreadyMissionCompleted);
+        result.put("missionCode", missionCode);
+        result.put("assignmentId", assignment.getId());
+        result.put("status", "COMPLETED");
+
+        if (alreadyAcquired) {
+            result.put("message", "이미 소화기를 획득한 학생입니다. 미션 완료 상태는 유지됩니다.");
+        } else {
+            result.put("message", "소화기를 인식하여 미션을 완료했습니다.");
+        }
+
+        return result;
+    }
+
+    private boolean isYoloDetected(Map<String, Object> yoloResult) {
+        if (yoloResult == null) {
+            return false;
+        }
+
+        Object detected = yoloResult.get("detected");
+
+        if (detected instanceof Boolean bool) {
+            return bool;
+        }
+
+        if (detected != null) {
+            return Boolean.parseBoolean(String.valueOf(detected));
+        }
+
+        Object count = yoloResult.get("count");
+        if (count instanceof Number number) {
+            return number.intValue() > 0;
+        }
+
+        return false;
+    }
+
+    private ItemV4 findOrCreateExtinguisherItem() {
+        return itemRepositoryV4.findByItemCode("FIRE_EXTINGUISHER")
+                .orElseGet(() -> {
+                    ItemV4 item = ItemV4.builder()
+                            .id(UUID.randomUUID().toString())
+                            .itemCode("FIRE_EXTINGUISHER")
+                            .itemName("소화기")
+                            .description("화재 진압 미션에 사용하는 소화기")
+                            .itemType("EQUIPMENT")
+                            .build();
+
+                    return itemRepositoryV4.save(item);
+                });
+    }
+
+    private void upsertStudentMissionProgressForRoom(
+            ScenarioV4 scenario,
+            ScenarioAssignmentV4 assignment,
+            StudentV4 student,
+            int requiredCount,
+            int progressCount,
+            ProgressStatus status
+    ) {
+        StudentMissionProgressV4 progress = studentMissionProgressRepository
+                .findByScenario_IdAndAssignment_IdAndStudent_Id(
+                        scenario.getId(),
+                        assignment.getId(),
+                        student.getId()
+                )
+                .orElseGet(() -> StudentMissionProgressV4.builder()
+                        .id(UUID.randomUUID().toString())
+                        .scenario(scenario)
+                        .assignment(assignment)
+                        .student(student)
+                        .requiredCount(requiredCount)
+                        .progressCount(0)
+                        .status(ProgressStatus.IN_PROGRESS)
+                        .startedAt(LocalDateTime.now())
+                        .build());
+
+        progress.setRequiredCount(requiredCount);
+        progress.setProgressCount(Math.min(progressCount, requiredCount));
+        progress.setStatus(status);
+        progress.setUpdatedAt(LocalDateTime.now());
+
+        if (status == ProgressStatus.COMPLETED && progress.getCompletedAt() == null) {
+            progress.setCompletedAt(LocalDateTime.now());
+        }
+
+        studentMissionProgressRepository.save(progress);
+    }
+
+    private String buildYoloMissionMetaJson(
+            ScenarioAssignmentV4 assignment,
+            String missionCode,
+            Map<String, Object> yoloResult,
+            boolean alreadyAcquired
+    ) {
+        try {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("source", "YOLO");
+            map.put("assignmentId", assignment.getId());
+            map.put("missionCode", missionCode);
+            map.put("alreadyAcquired", alreadyAcquired);
+            map.put("yoloDetected", yoloResult != null ? yoloResult.get("detected") : null);
+            map.put("yoloCount", yoloResult != null ? yoloResult.get("count") : null);
+            map.put("best", yoloResult != null ? yoloResult.get("best") : null);
+
+            return objectMapper.writeValueAsString(map);
+        } catch (Exception e) {
+            return "{}";
+        }
+    }
+
 }

@@ -9,6 +9,8 @@ import lombok.*;
 @AllArgsConstructor
 public class RandomQuizResponse {
 
+    private Boolean available;
+
     private String contentId;
     private String quizType;
 
@@ -18,4 +20,10 @@ public class RandomQuizResponse {
     private String option2;
     private String option3;
     private String option4;
+
+    private Integer submittedCount;
+    private Integer remainingCount;
+    private Integer totalQuizCount;
+
+    private String message;
 }

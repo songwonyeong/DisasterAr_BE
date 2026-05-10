@@ -10,7 +10,10 @@ import java.time.LocalDateTime;
 @Table(
         name = "quiz_submissions",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uq_quiz_one_submit", columnNames = {"scenario_id", "assignment_id", "student_id"})
+                @UniqueConstraint(
+                        name = "uq_quiz_one_submit_per_content",
+                        columnNames = {"scenario_id", "assignment_id", "student_id", "content_id"}
+                )
         },
         indexes = {
                 @Index(name = "idx_quiz_by_student", columnList = "scenario_id, student_id")
@@ -31,6 +34,10 @@ public class QuizSubmissionV4 {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "assignment_id", nullable = false)
     private ScenarioAssignmentV4 assignment;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "content_id")
+    private ContentV4 content;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "student_id", nullable = false)

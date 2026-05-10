@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 @Getter
 @Builder
 public class ActiveAssignmentResponse {
+
     private String triggerId;
     private String assignmentId;
     private String assignmentType;
@@ -24,6 +25,11 @@ public class ActiveAssignmentResponse {
 
     private String paramsJson;
     private String missionCode;
+
+    // 추가
+    private Integer requiredCount;
+    private Integer progressCount;
+    private String status;
 
     private LocalDateTime triggeredAt;
 }
