@@ -37,6 +37,7 @@ public class ScenarioService {
     private final StudentRepositoryV4 studentRepositoryV4;
     private final ScenarioTeamRepositoryV4 scenarioTeamRepositoryV4;
     private final ScenarioTeamMemberRepositoryV4 scenarioTeamMemberRepositoryV4;
+    private final BeaconElementMapRepositoryV4 beaconElementMapRepositoryV4;
 
 
     public ScenarioResponse create(ScenarioCreateRequest req) {
@@ -1632,6 +1633,9 @@ public class ScenarioService {
 
         ensureExtinguisherQuizCompleted(scenario, student);
 
+        // 화재 발생 구역에 도착했는지 확인
+        ensureStudentAtFireOrigin(scenario, student);
+
         int increment = req.getIncrementCount() == null || req.getIncrementCount() < 1
                 ? 1
                 : req.getIncrementCount();
@@ -1734,6 +1738,30 @@ public class ScenarioService {
                 .status(progress.getStatus().name())
                 .missionCompleted(completed)
                 .build();
+    }
+
+    private void ensureStudentAtFireOrigin(
+            ScenarioV4 scenario,
+            StudentV4 student
+    ) {
+        if (scenario.getDisasterOriginElementId() == null ||
+                scenario.getDisasterOriginElementId().isBlank()) {
+            throw new IllegalArgumentException("화재 발생 구역 정보가 없습니다.");
+        }
+
+        if (student.getLastBeacon() == null) {
+            throw new IllegalArgumentException("학생의 현재 비콘 위치 정보가 없습니다.");
+        }
+
+        BeaconElementMapV4 mapping = beaconElementMapRepositoryV4
+                .findByBeacon_Id(student.getLastBeacon().getId())
+                .orElseThrow(() -> new IllegalArgumentException("현재 비콘의 구조도 element 매핑이 없습니다."));
+
+        String currentElementId = mapping.getElementId();
+
+        if (!scenario.getDisasterOriginElementId().equals(currentElementId)) {
+            throw new IllegalArgumentException("화재 발생 구역에 도착해야 도넛 게임을 진행할 수 있습니다.");
+        }
     }
 
     private void ensureExtinguisherQuizCompleted(
