@@ -1,0 +1,380 @@
+package com.example.disaster_ar.service;
+
+import com.example.disaster_ar.domain.v4.*;
+import com.example.disaster_ar.dto.monitoring.*;
+import com.example.disaster_ar.repository.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Service
+@RequiredArgsConstructor
+public class MonitoringService {
+
+    private final ClassroomRepository classroomRepository;
+    private final StudentRepositoryV4 studentRepositoryV4;
+    private final BeaconElementMapRepositoryV4 beaconElementMapRepositoryV4;
+    private final ObjectMapper objectMapper;
+
+    public MonitoringMapResponse getMonitoringMap(String classroomId) {
+
+        ClassroomV4 classroom = classroomRepository.findById(classroomId)
+                .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
+
+        RoomMapVersionV4 mapVersion = classroom.getActiveMapVersion();
+
+        if (mapVersion == null) {
+            throw new IllegalArgumentException("활성 구조도가 없습니다.");
+        }
+
+        if (mapVersion.getFloorsJson() == null || mapVersion.getFloorsJson().isBlank()) {
+            throw new IllegalArgumentException("활성 구조도의 floorsJson이 비어 있습니다.");
+        }
+
+        List<StudentV4> students = studentRepositoryV4
+                .findByClassroom_IdOrderByJoinedAtAsc(classroom.getId());
+
+        Map<String, List<StudentV4>> studentsByBeaconId = students.stream()
+                .filter(s -> s.getLastBeacon() != null)
+                .collect(Collectors.groupingBy(s -> s.getLastBeacon().getId()));
+
+        List<MonitoringFloorResponse> floors = parseFloors(
+                mapVersion.getFloorsJson(),
+                classroom,
+                studentsByBeaconId
+        );
+
+        return MonitoringMapResponse.builder()
+                .classroomId(classroom.getId())
+                .mapVersionId(mapVersion.getId())
+                .floors(floors)
+                .build();
+    }
+
+    private List<MonitoringFloorResponse> parseFloors(
+            String floorsJson,
+            ClassroomV4 classroom,
+            Map<String, List<StudentV4>> studentsByBeaconId
+    ) {
+        try {
+            Object root = objectMapper.readValue(floorsJson, Object.class);
+
+            List<?> floorList;
+
+            if (root instanceof Map<?, ?> rootMap && rootMap.get("floors") instanceof List<?> list) {
+                floorList = list;
+            } else if (root instanceof List<?> list) {
+                floorList = list;
+            } else {
+                return List.of();
+            }
+
+            List<MonitoringFloorResponse> result = new ArrayList<>();
+
+            for (Object floorObj : floorList) {
+                if (!(floorObj instanceof Map<?, ?> floor)) {
+                    continue;
+                }
+
+                Integer floorIndex = asInteger(firstNonNull(
+                        floor.get("floorIndex"),
+                        floor.get("floor_index")
+                ));
+
+                String floorLabel = asString(firstNonNull(
+                        floor.get("floorLabel"),
+                        floor.get("floor_label"),
+                        floor.get("name")
+                ));
+
+                MonitoringImageResponse image = parseImage(floor);
+
+                List<Map<String, Object>> elements = parseElements(floor);
+
+                List<BeaconMarkerResponse> beaconMarkers = buildBeaconMarkers(
+                        classroom,
+                        floorIndex,
+                        elements,
+                        studentsByBeaconId
+                );
+
+                result.add(
+                        MonitoringFloorResponse.builder()
+                                .floorIndex(floorIndex)
+                                .floorLabel(floorLabel)
+                                .image(image)
+                                .elements(elements)
+                                .beaconMarkers(beaconMarkers)
+                                .build()
+                );
+            }
+
+            return result;
+
+        } catch (Exception e) {
+            throw new IllegalArgumentException("구조도 JSON 파싱 실패", e);
+        }
+    }
+
+    private MonitoringImageResponse parseImage(Map<?, ?> floor) {
+        Object imageObj = firstNonNull(
+                floor.get("image"),
+                floor.get("imageUrl"),
+                floor.get("uploadedImage"),
+                floor.get("uploaded_image")
+        );
+
+        if (imageObj instanceof Map<?, ?> imageMap) {
+            String src = asString(firstNonNull(
+                    imageMap.get("src"),
+                    imageMap.get("url")
+            ));
+
+            Double naturalWidth = null;
+            Double naturalHeight = null;
+
+            Object naturalObj = imageMap.get("natural");
+            if (naturalObj instanceof Map<?, ?> naturalMap) {
+                naturalWidth = asDouble(firstNonNull(
+                        naturalMap.get("w"),
+                        naturalMap.get("width")
+                ));
+                naturalHeight = asDouble(firstNonNull(
+                        naturalMap.get("h"),
+                        naturalMap.get("height")
+                ));
+            }
+
+            return MonitoringImageResponse.builder()
+                    .src(src)
+                    .naturalWidth(naturalWidth)
+                    .naturalHeight(naturalHeight)
+                    .build();
+        }
+
+        String src = asString(imageObj);
+
+        return MonitoringImageResponse.builder()
+                .src(src)
+                .build();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> parseElements(Map<?, ?> floor) {
+        Object elementsObj = firstNonNull(
+                floor.get("elements"),
+                floor.get("elementsJson"),
+                floor.get("elements_json")
+        );
+
+        if (elementsObj instanceof String elementsString) {
+            try {
+                elementsObj = objectMapper.readValue(elementsString, Object.class);
+            } catch (Exception e) {
+                return List.of();
+            }
+        }
+
+        if (!(elementsObj instanceof List<?> list)) {
+            return List.of();
+        }
+
+        List<Map<String, Object>> elements = new ArrayList<>();
+
+        for (Object obj : list) {
+            if (obj instanceof Map<?, ?> map) {
+                Map<String, Object> converted = new LinkedHashMap<>();
+                for (Map.Entry<?, ?> entry : map.entrySet()) {
+                    converted.put(String.valueOf(entry.getKey()), entry.getValue());
+                }
+                elements.add(converted);
+            }
+        }
+
+        return elements;
+    }
+
+    private List<BeaconMarkerResponse> buildBeaconMarkers(
+            ClassroomV4 classroom,
+            Integer floorIndex,
+            List<Map<String, Object>> elements,
+            Map<String, List<StudentV4>> studentsByBeaconId
+    ) {
+        if (classroom.getSchool() == null || floorIndex == null) {
+            return List.of();
+        }
+
+        List<BeaconElementMapV4> mappings =
+                beaconElementMapRepositoryV4.findBySchool_IdAndFloorIndex(
+                        classroom.getSchool().getId(),
+                        floorIndex
+                );
+
+        List<BeaconMarkerResponse> markers = new ArrayList<>();
+
+        for (BeaconElementMapV4 mapping : mappings) {
+            if (mapping.getBeacon() == null) {
+                continue;
+            }
+
+            BeaconV4 beacon = mapping.getBeacon();
+            String elementId = mapping.getElementId();
+
+            Map<String, Object> element = findElementById(elements, elementId);
+
+            List<StudentV4> detectedStudents =
+                    studentsByBeaconId.getOrDefault(beacon.getId(), List.of());
+
+            List<MonitoringStudentResponse> studentResponses = detectedStudents.stream()
+                    .map(this::toMonitoringStudent)
+                    .toList();
+
+            markers.add(
+                    BeaconMarkerResponse.builder()
+                            .beaconId(beacon.getId())
+                            .beaconNo(beacon.getBeaconNo())
+                            .elementId(elementId)
+                            .placementName(resolvePlacementName(element, beacon))
+                            .zoneType(resolveZoneType(element))
+                            .x(resolveDouble(element, "x", beacon.getX()))
+                            .y(resolveDouble(element, "y", beacon.getY()))
+                            .width(resolveDouble(element, "width", null))
+                            .height(resolveDouble(element, "height", null))
+                            .studentCount(studentResponses.size())
+                            .students(studentResponses)
+                            .build()
+            );
+        }
+
+        return markers;
+    }
+
+    private MonitoringStudentResponse toMonitoringStudent(StudentV4 student) {
+        return MonitoringStudentResponse.builder()
+                .studentId(student.getId())
+                .studentName(student.getStudentName())
+                .beaconState(
+                        student.getBeaconState() != null
+                                ? student.getBeaconState().name()
+                                : null
+                )
+                .lastRssi(student.getLastBeaconRssi())
+                .lastSeenAt(
+                        student.getLastBeaconSeenAt() != null
+                                ? student.getLastBeaconSeenAt().toString()
+                                : null
+                )
+                .build();
+    }
+
+    private Map<String, Object> findElementById(
+            List<Map<String, Object>> elements,
+            String elementId
+    ) {
+        if (elementId == null) {
+            return null;
+        }
+
+        for (Map<String, Object> element : elements) {
+            String currentId = asString(firstNonNull(
+                    element.get("id"),
+                    element.get("elementId"),
+                    element.get("element_id")
+            ));
+
+            if (elementId.equals(currentId)) {
+                return element;
+            }
+        }
+
+        return null;
+    }
+
+    private String resolvePlacementName(Map<String, Object> element, BeaconV4 beacon) {
+        if (element != null) {
+            String value = asString(firstNonNull(
+                    element.get("placementName"),
+                    element.get("name"),
+                    element.get("label"),
+                    element.get("elementName"),
+                    element.get("element_name")
+            ));
+
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+
+        return beacon.getName();
+    }
+
+    private String resolveZoneType(Map<String, Object> element) {
+        if (element == null) {
+            return null;
+        }
+
+        return asString(firstNonNull(
+                element.get("zoneType"),
+                element.get("elementType"),
+                element.get("element_type"),
+                element.get("type")
+        ));
+    }
+
+    private Double resolveDouble(Map<String, Object> element, String key, Double fallback) {
+        if (element == null) {
+            return fallback;
+        }
+
+        Double value = asDouble(element.get(key));
+        return value != null ? value : fallback;
+    }
+
+    private Object firstNonNull(Object... values) {
+        for (Object value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private String asString(Object value) {
+        return value != null ? String.valueOf(value) : null;
+    }
+
+    private Integer asInteger(Object value) {
+        if (value == null) {
+            return null;
+        }
+
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Double asDouble(Object value) {
+        if (value == null) {
+            return null;
+        }
+
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+
+        try {
+            return Double.parseDouble(String.valueOf(value));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+}

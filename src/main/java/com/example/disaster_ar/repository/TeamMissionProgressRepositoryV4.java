@@ -20,4 +20,5 @@ public interface TeamMissionProgressRepositoryV4 extends JpaRepository<TeamMissi
             String teamId,
             ProgressStatus status
     );
+
 }

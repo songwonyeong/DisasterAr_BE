@@ -3,8 +3,7 @@ package com.example.disaster_ar.repository;
 import com.example.disaster_ar.domain.v4.BeaconElementMapV4;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 public interface BeaconElementMapRepositoryV4 extends JpaRepository<BeaconElementMapV4, String> {
 

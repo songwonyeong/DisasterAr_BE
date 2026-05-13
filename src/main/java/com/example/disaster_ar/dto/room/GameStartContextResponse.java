@@ -36,4 +36,6 @@ public class GameStartContextResponse {
 
     private String warningMessage;
 
+    private Integer trainingTimeSeconds;
+
 }

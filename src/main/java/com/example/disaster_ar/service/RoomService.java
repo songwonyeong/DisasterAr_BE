@@ -63,6 +63,7 @@ public class RoomService {
     private final ItemRepositoryV4 itemRepositoryV4;
     private final StudentItemRepositoryV4 studentItemRepositoryV4;
     private final ScenarioActionEventRepositoryV4 scenarioActionEventRepositoryV4;
+    private final TeamMissionProgressRepositoryV4 teamMissionProgressRepositoryV4;
 
     public RoomResponse createRoom(RoomCreateRequest req) {
 
@@ -433,6 +434,7 @@ public class RoomService {
                 .scenarioType(scenario.getScenarioType() != null ? scenario.getScenarioType().name() : null)
                 .trainingState(classroom.getTrainingState() != null ? classroom.getTrainingState().name() : null)
                 .trainingStartedAt(classroom.getTrainingStartedAt())
+                .trainingTimeSeconds(scenario != null ? scenario.getTrainTime() : null)
                 .activeMapVersionId(mapVersion.getId())
                 .floorsJson(mapVersion.getFloorsJson())
 
@@ -1276,9 +1278,56 @@ public class RoomService {
             ScenarioTriggerV4 trigger
     ) {
         if (scenario == null || assignment == null || student == null) {
-            return new MissionProgressView(1, 0, normalizeTriggerStatus(trigger != null ? trigger.getStatus() : null));
+            return new MissionProgressView(
+                    1,
+                    0,
+                    normalizeTriggerStatus(trigger != null ? trigger.getStatus() : null)
+            );
         }
 
+        String missionCode = extractMissionCode(
+                assignment.getParamsJson(),
+                assignment.getContent() != null ? assignment.getContent().getTitle() : null
+        );
+
+        // 팀 단위로 누적되는 미션은 도넛 게임만 team_mission_progress를 사용
+        if ("FIRETEAM_PUT_OUT_FIRE".equals(missionCode)) {
+            return scenarioTeamMemberRepositoryV4
+                    .findByScenario_IdAndStudent_Id(
+                            scenario.getId(),
+                            student.getId()
+                    )
+                    .flatMap(member -> {
+                        if (member.getTeam() == null) {
+                            return Optional.empty();
+                        }
+
+                        return teamMissionProgressRepositoryV4
+                                .findByScenario_IdAndAssignment_IdAndTeam_Id(
+                                        scenario.getId(),
+                                        assignment.getId(),
+                                        member.getTeam().getId()
+                                );
+                    })
+                    .map(progress -> new MissionProgressView(
+                            progress.getRequiredCount() != null
+                                    ? progress.getRequiredCount()
+                                    : resolveDefaultRequiredCount(assignment),
+                            progress.getProgressCount() != null
+                                    ? progress.getProgressCount()
+                                    : 0,
+                            progress.getStatus() != null
+                                    ? progress.getStatus().name()
+                                    : normalizeTriggerStatus(trigger.getStatus())
+                    ))
+                    .orElseGet(() -> new MissionProgressView(
+                            resolveDefaultRequiredCount(assignment),
+                            0,
+                            normalizeTriggerStatus(trigger.getStatus())
+                    ));
+        }
+
+        // 나머지는 학생 개인 progress 기준
         return studentMissionProgressRepository
                 .findByScenario_IdAndAssignment_IdAndStudent_Id(
                         scenario.getId(),
@@ -1286,9 +1335,15 @@ public class RoomService {
                         student.getId()
                 )
                 .map(progress -> new MissionProgressView(
-                        progress.getRequiredCount() != null ? progress.getRequiredCount() : resolveDefaultRequiredCount(assignment),
-                        progress.getProgressCount() != null ? progress.getProgressCount() : 0,
-                        progress.getStatus() != null ? progress.getStatus().name() : normalizeTriggerStatus(trigger.getStatus())
+                        progress.getRequiredCount() != null
+                                ? progress.getRequiredCount()
+                                : resolveDefaultRequiredCount(assignment),
+                        progress.getProgressCount() != null
+                                ? progress.getProgressCount()
+                                : 0,
+                        progress.getStatus() != null
+                                ? progress.getStatus().name()
+                                : normalizeTriggerStatus(trigger.getStatus())
                 ))
                 .orElseGet(() -> new MissionProgressView(
                         resolveDefaultRequiredCount(assignment),
@@ -1309,6 +1364,10 @@ public class RoomService {
 
         if ("COMMON_RANDOM_QUIZ".equals(missionCode)) {
             return getIntParam(assignment.getParamsJson(), "requiredCorrectCount", 3);
+        }
+
+        if ("FIRETEAM_PUT_OUT_FIRE".equals(missionCode)) {
+            return getIntParam(assignment.getParamsJson(), "requiredClickCount", 30);
         }
 
         return getIntParam(assignment.getParamsJson(), "requiredCount", 1);

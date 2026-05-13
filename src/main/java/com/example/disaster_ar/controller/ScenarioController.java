@@ -258,4 +258,37 @@ public class ScenarioController {
                 scenarioService.submitCallMission(scenarioId, req)
         );
     }
+
+    @Operation(summary = "[26.05.13] 소화기 사용 퀴즈 카드 조회")
+    @GetMapping("/{scenarioId}/extinguisher-quiz")
+    public ResponseEntity<ExtinguisherQuizResponse> getExtinguisherQuiz(
+            @PathVariable String scenarioId
+    ) {
+        return ResponseEntity.ok(
+                scenarioService.getExtinguisherQuiz(scenarioId)
+        );
+    }
+
+    @Operation(summary = "[26.05.13] 소화기 사용 퀴즈 제출")
+    @PostMapping("/{scenarioId}/extinguisher-quiz/submit")
+    public ResponseEntity<ExtinguisherQuizSubmitResponse> submitExtinguisherQuiz(
+            @PathVariable String scenarioId,
+            @RequestBody ExtinguisherQuizSubmitRequest req
+    ) {
+        return ResponseEntity.ok(
+                scenarioService.submitExtinguisherQuiz(scenarioId, req)
+        );
+    }
+
+    @Operation(summary = "[26.05.13] 도넛 게임 진행률 증가")
+    @PostMapping("/{scenarioId}/team-missions/{assignmentId}/donut/progress")
+    public ResponseEntity<DonutGameProgressResponse> progressDonutGame(
+            @PathVariable String scenarioId,
+            @PathVariable String assignmentId,
+            @RequestBody DonutGameProgressRequest req
+    ) {
+        return ResponseEntity.ok(
+                scenarioService.progressDonutGame(scenarioId, assignmentId, req)
+        );
+    }
 }
