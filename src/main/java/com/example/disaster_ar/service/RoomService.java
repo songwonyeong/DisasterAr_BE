@@ -31,11 +31,15 @@ import com.example.disaster_ar.domain.v4.ItemV4;
 import com.example.disaster_ar.domain.v4.StudentItemV4;
 import com.example.disaster_ar.domain.v4.StudentMissionProgressV4;
 import com.example.disaster_ar.domain.v4.ScenarioActionEventV4;
+import com.example.disaster_ar.domain.v4.TeamMissionProgressV4;
+
+import java.time.Duration;
+import java.util.List;
+import java.util.Optional;
 
 import com.example.disaster_ar.domain.v4.enums.AcquiredSource;
-import com.example.disaster_ar.domain.v4.enums.ProgressStatus;
 import com.example.disaster_ar.domain.v4.enums.ScenarioActionType;
-
+import com.example.disaster_ar.domain.v4.enums.ProgressStatus;
 import java.util.*;
 
 @Service
@@ -64,6 +68,7 @@ public class RoomService {
     private final StudentItemRepositoryV4 studentItemRepositoryV4;
     private final ScenarioActionEventRepositoryV4 scenarioActionEventRepositoryV4;
     private final TeamMissionProgressRepositoryV4 teamMissionProgressRepositoryV4;
+
 
     public RoomResponse createRoom(RoomCreateRequest req) {
 
@@ -1290,7 +1295,7 @@ public class RoomService {
                 assignment.getContent() != null ? assignment.getContent().getTitle() : null
         );
 
-        // 팀 단위로 누적되는 미션은 도넛 게임만 team_mission_progress를 사용
+        // 도넛 게임은 팀 progress 기준 + 팀 퀴즈 대기 상태까지 반영
         if ("FIRETEAM_PUT_OUT_FIRE".equals(missionCode)) {
             return scenarioTeamMemberRepositoryV4
                     .findByScenario_IdAndStudent_Id(
@@ -1316,14 +1321,24 @@ public class RoomService {
                             progress.getProgressCount() != null
                                     ? progress.getProgressCount()
                                     : 0,
-                            progress.getStatus() != null
-                                    ? progress.getStatus().name()
-                                    : normalizeTriggerStatus(trigger.getStatus())
+                            resolveFireteamPutOutFireStatus(
+                                    scenario,
+                                    assignment,
+                                    student,
+                                    trigger,
+                                    progress
+                            )
                     ))
                     .orElseGet(() -> new MissionProgressView(
                             resolveDefaultRequiredCount(assignment),
                             0,
-                            normalizeTriggerStatus(trigger.getStatus())
+                            resolveFireteamPutOutFireStatus(
+                                    scenario,
+                                    assignment,
+                                    student,
+                                    trigger,
+                                    null
+                            )
                     ));
         }
 
@@ -1350,6 +1365,111 @@ public class RoomService {
                         0,
                         normalizeTriggerStatus(trigger.getStatus())
                 ));
+    }
+
+    private String resolveFireteamPutOutFireStatus(
+            ScenarioV4 scenario,
+            ScenarioAssignmentV4 donutAssignment,
+            StudentV4 student,
+            ScenarioTriggerV4 trigger,
+            TeamMissionProgressV4 donutProgress
+    ) {
+        // 도넛 게임 자체가 이미 완료됐으면 무조건 COMPLETED
+        if (donutProgress != null && donutProgress.getStatus() == ProgressStatus.COMPLETED) {
+            return "COMPLETED";
+        }
+
+        // 소화기 사용 퀴즈 assignment 찾기
+        ScenarioAssignmentV4 quizAssignment = scenarioAssignmentRepositoryV4
+                .findByScenario_IdOrderByCreatedAtAsc(scenario.getId())
+                .stream()
+                .filter(assignment -> "FIRETEAM_EXTINGUISHER_QUIZ".equals(
+                        extractMissionCode(
+                                assignment.getParamsJson(),
+                                assignment.getContent() != null
+                                        ? assignment.getContent().getTitle()
+                                        : null
+                        )
+                ))
+                .findFirst()
+                .orElse(null);
+
+        if (quizAssignment == null) {
+            return normalizeTriggerStatus(
+                    trigger != null ? trigger.getStatus() : null
+            );
+        }
+
+        // 현재 학생의 팀 조회
+        Optional<ScenarioTeamMemberV4> memberOpt =
+                scenarioTeamMemberRepositoryV4.findByScenario_IdAndStudent_Id(
+                        scenario.getId(),
+                        student.getId()
+                );
+
+        if (memberOpt.isEmpty() || memberOpt.get().getTeam() == null) {
+            return normalizeTriggerStatus(
+                    trigger != null ? trigger.getStatus() : null
+            );
+        }
+
+        ScenarioTeamV4 team = memberOpt.get().getTeam();
+
+        // 같은 FIRE 팀원 전체 조회
+        List<ScenarioTeamMemberV4> members =
+                scenarioTeamMemberRepositoryV4.findByScenario_IdAndTeam_IdOrderByAssignedAtAsc(
+                        scenario.getId(),
+                        team.getId()
+                );
+
+        int total = members.size();
+        int completed = 0;
+        LocalDateTime allCompletedAt = null;
+
+        for (ScenarioTeamMemberV4 member : members) {
+            if (member.getStudent() == null) {
+                continue;
+            }
+
+            StudentMissionProgressV4 quizProgress = studentMissionProgressRepository
+                    .findByScenario_IdAndAssignment_IdAndStudent_Id(
+                            scenario.getId(),
+                            quizAssignment.getId(),
+                            member.getStudent().getId()
+                    )
+                    .orElse(null);
+
+            if (quizProgress != null && quizProgress.getStatus() == ProgressStatus.COMPLETED) {
+                completed++;
+
+                LocalDateTime completedAt = quizProgress.getCompletedAt() != null
+                        ? quizProgress.getCompletedAt()
+                        : LocalDateTime.now();
+
+                if (allCompletedAt == null || completedAt.isAfter(allCompletedAt)) {
+                    allCompletedAt = completedAt;
+                }
+            }
+        }
+
+        // 팀원 중 아직 소화기 퀴즈 미완료자가 있으면 대기
+        if (total == 0 || completed < total) {
+            return "WAITING_TEAM";
+        }
+
+        // 팀원 전원 퀴즈 완료 후 5초 대기
+        if (allCompletedAt != null) {
+            long elapsedSeconds = Duration
+                    .between(allCompletedAt, LocalDateTime.now())
+                    .getSeconds();
+
+            if (elapsedSeconds < 5) {
+                return "WAITING_DELAY";
+            }
+        }
+
+        // 전원 퀴즈 완료 + 5초 대기 완료
+        return "IN_PROGRESS";
     }
 
     private Integer resolveDefaultRequiredCount(ScenarioAssignmentV4 assignment) {

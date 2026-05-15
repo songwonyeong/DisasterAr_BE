@@ -291,4 +291,15 @@ public class ScenarioController {
                 scenarioService.progressDonutGame(scenarioId, assignmentId, req)
         );
     }
+
+    @Operation(summary = "[26.05.15] 소화팀 팀 상태 조회")
+    @GetMapping("/{scenarioId}/fireteam/state")
+    public ResponseEntity<FireteamStateResponse> getFireteamState(
+            @PathVariable String scenarioId,
+            @RequestParam String studentId
+    ) {
+        return ResponseEntity.ok(
+                scenarioService.getFireteamState(scenarioId, studentId)
+        );
+    }
 }
