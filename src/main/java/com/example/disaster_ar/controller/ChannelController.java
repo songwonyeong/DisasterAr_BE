@@ -127,9 +127,9 @@ public class ChannelController {
     @PostMapping(value = "/{schoolId}/maps", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ChannelMapResponse> addChannelMap(
             @PathVariable String schoolId,
-            @RequestPart("image") MultipartFile image,
-            @RequestPart(value = "floorIndex", required = false) Integer floorIndex,
-            @RequestPart(value = "floorLabel", required = false) String floorLabel
+            @RequestParam("image") MultipartFile image,
+            @RequestParam(value = "floorIndex", required = false) Integer floorIndex,
+            @RequestParam(value = "floorLabel", required = false) String floorLabel
     ) {
         return ResponseEntity.ok(
                 channelService.addChannelMap(schoolId, image, floorIndex, floorLabel)
