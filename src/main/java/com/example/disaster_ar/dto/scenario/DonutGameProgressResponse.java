@@ -23,4 +23,9 @@ public class DonutGameProgressResponse {
 
     private String status;
     private Boolean missionCompleted;
+
+    private Integer acceptedIncrementCount;
+    private String phase;
+    private String nextClientAction;
+    private Integer waitRemainingSeconds;
 }

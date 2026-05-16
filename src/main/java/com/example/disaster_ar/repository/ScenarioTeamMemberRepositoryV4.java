@@ -24,4 +24,9 @@ public interface ScenarioTeamMemberRepositoryV4 extends JpaRepository<ScenarioTe
     );
 
     boolean existsByScenario_Id(String scenarioId);
+
+    List<ScenarioTeamMemberV4> findByScenario_IdAndTeam_IdOrderByAssignedAtAsc(
+            String scenarioId,
+            String teamId
+    );
 }

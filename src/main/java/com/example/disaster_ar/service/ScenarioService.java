@@ -1636,6 +1636,14 @@ public class ScenarioService {
         // 화재 발생 구역에 도착했는지 확인
         ensureStudentAtFireOrigin(scenario, student);
 
+        FireteamStateResponse fireteamState = buildFireteamState(scenario, student);
+
+        if (!"DONUT_ACTIVE".equals(fireteamState.getPhase())
+                || !Boolean.TRUE.equals(fireteamState.getCanPlayDonut())) {
+
+            throw new IllegalArgumentException(resolveDonutBlockedMessage(fireteamState));
+        }
+
         int increment = req.getIncrementCount() == null || req.getIncrementCount() < 1
                 ? 1
                 : req.getIncrementCount();
@@ -1647,7 +1655,7 @@ public class ScenarioService {
         );
 
         TeamMissionProgressV4 progress = teamMissionProgressRepositoryV4
-                .findByScenario_IdAndAssignment_IdAndTeam_Id(
+                .findForUpdateByScenarioIdAndAssignmentIdAndTeamId(
                         scenario.getId(),
                         assignment.getId(),
                         team.getId()
@@ -1673,14 +1681,25 @@ public class ScenarioService {
                     .missionCode(missionCode)
                     .requiredCount(progress.getRequiredCount())
                     .progressCount(progress.getProgressCount())
-                    .incrementCount(0)
+
+                    // 요청은 들어왔지만 이미 완료 상태라 실제 반영은 0
+                    .incrementCount(increment)
+                    .acceptedIncrementCount(0)
+
                     .status(progress.getStatus().name())
                     .missionCompleted(true)
+
+                    // 도넛 완료 후에는 분사 단계로 전환
+                    .phase("SPRAY_READY")
+                    .nextClientAction("START_SPRAY")
+                    .waitRemainingSeconds(0)
+
                     .build();
         }
 
         int currentCount = progress.getProgressCount() != null ? progress.getProgressCount() : 0;
         int nextCount = Math.min(currentCount + increment, requiredCount);
+        int acceptedIncrement = nextCount - currentCount;
 
         progress.setRequiredCount(requiredCount);
         progress.setProgressCount(nextCount);
@@ -1701,7 +1720,7 @@ public class ScenarioService {
                 .scenario(scenario)
                 .student(student)
                 .actionType(ScenarioActionType.MISSION_INCREMENT)
-                .valueInt(increment)
+                .valueInt(acceptedIncrement)
                 .valueText("FIRETEAM_PUT_OUT_FIRE")
                 .metaJson(buildDonutGameMetaJson(assignment, team, currentCount, nextCount, requiredCount))
                 .createdAt(LocalDateTime.now())
@@ -1735,9 +1754,46 @@ public class ScenarioService {
                 .requiredCount(requiredCount)
                 .progressCount(nextCount)
                 .incrementCount(increment)
+                .acceptedIncrementCount(acceptedIncrement)
                 .status(progress.getStatus().name())
                 .missionCompleted(completed)
+                .phase(completed ? "SPRAY_READY" : "DONUT_ACTIVE")
+                .nextClientAction(completed ? "START_SPRAY" : "START_DONUT")
+                .waitRemainingSeconds(0)
                 .build();
+    }
+
+    private String resolveDonutBlockedMessage(FireteamStateResponse state) {
+        if (state == null) {
+            return "도넛 게임을 진행할 수 없습니다.";
+        }
+
+        if ("GET_EXTINGUISHER".equals(state.getPhase())) {
+            return "소화기를 먼저 획득해야 합니다.";
+        }
+
+        if ("QUIZ".equals(state.getPhase())) {
+            return "소화기 사용 퀴즈를 먼저 완료해야 합니다.";
+        }
+
+        if ("WAITING_TEAM_QUIZ".equals(state.getPhase())) {
+            return "소화팀 전원이 소화기 사용 퀴즈를 완료해야 도넛 게임을 시작할 수 있습니다.";
+        }
+
+        if ("POST_QUIZ_DELAY".equals(state.getPhase())) {
+            return "도넛 게임 시작 대기 중입니다. 남은 시간: " + state.getWaitRemainingSeconds() + "초";
+        }
+
+        if ("DONUT_ACTIVE".equals(state.getPhase())
+                && !Boolean.TRUE.equals(state.getStudentAtFireOrigin())) {
+            return "화재 발생 구역에 도착해야 도넛 게임을 진행할 수 있습니다.";
+        }
+
+        if ("SPRAY_READY".equals(state.getPhase())) {
+            return "도넛 게임이 완료되었습니다. 소화기 분사 단계로 이동하세요.";
+        }
+
+        return "도넛 게임을 진행할 수 없습니다.";
     }
 
     private void ensureStudentAtFireOrigin(
@@ -1840,4 +1896,247 @@ public class ScenarioService {
         }
     }
 
+    @Transactional(readOnly = true)
+    public FireteamStateResponse getFireteamState(
+            String scenarioId,
+            String studentId
+    ) {
+        ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
+                .orElseThrow(() -> new IllegalArgumentException("시나리오가 존재하지 않습니다."));
+
+        StudentV4 student = studentRepository.findById(studentId)
+                .orElseThrow(() -> new IllegalArgumentException("학생이 존재하지 않습니다."));
+
+        return buildFireteamState(scenario, student);
+    }
+
+    private FireteamStateResponse buildFireteamState(
+            ScenarioV4 scenario,
+            StudentV4 student
+    ) {
+        ScenarioTeamMemberV4 myMember = scenarioTeamMemberRepositoryV4
+                .findByScenario_IdAndStudent_Id(scenario.getId(), student.getId())
+                .orElseThrow(() -> new IllegalArgumentException("학생 팀 배정 정보가 없습니다."));
+
+        ScenarioTeamV4 fireTeam = myMember.getTeam();
+
+        if (fireTeam == null || !"FIRE".equals(fireTeam.getTeamCode())) {
+            throw new IllegalArgumentException("소화팀 학생만 조회할 수 있습니다.");
+        }
+
+        ScenarioAssignmentV4 getExtinguisherAssignment =
+                findAssignmentByMissionCode(scenario.getId(), "FIRETEAM_GET_EXTINGUISHER");
+
+        ScenarioAssignmentV4 quizAssignment =
+                findAssignmentByMissionCode(scenario.getId(), "FIRETEAM_EXTINGUISHER_QUIZ");
+
+        ScenarioAssignmentV4 donutAssignment =
+                findAssignmentByMissionCode(scenario.getId(), "FIRETEAM_PUT_OUT_FIRE");
+
+        List<ScenarioTeamMemberV4> fireMembers =
+                scenarioTeamMemberRepositoryV4.findByScenario_IdAndTeam_IdOrderByAssignedAtAsc(
+                        scenario.getId(),
+                        fireTeam.getId()
+                );
+
+        List<FireteamStateResponse.MemberState> memberStates = new ArrayList<>();
+
+        int quizCompletedCount = 0;
+        LocalDateTime allQuizCompletedAt = null;
+
+        for (ScenarioTeamMemberV4 member : fireMembers) {
+            StudentV4 memberStudent = member.getStudent();
+
+            StudentMissionProgressV4 quizProgress = studentMissionProgressRepository
+                    .findByScenario_IdAndAssignment_IdAndStudent_Id(
+                            scenario.getId(),
+                            quizAssignment.getId(),
+                            memberStudent.getId()
+                    )
+                    .orElse(null);
+
+            String quizStatus = quizProgress != null && quizProgress.getStatus() != null
+                    ? quizProgress.getStatus().name()
+                    : "IN_PROGRESS";
+
+            if ("COMPLETED".equals(quizStatus)) {
+                quizCompletedCount++;
+
+                LocalDateTime completedAt = quizProgress.getCompletedAt() != null
+                        ? quizProgress.getCompletedAt()
+                        : LocalDateTime.now();
+
+                if (allQuizCompletedAt == null || completedAt.isAfter(allQuizCompletedAt)) {
+                    allQuizCompletedAt = completedAt;
+                }
+            }
+
+            memberStates.add(
+                    FireteamStateResponse.MemberState.builder()
+                            .studentId(memberStudent.getId())
+                            .studentName(memberStudent.getStudentName())
+                            .quizStatus(quizStatus)
+                            .online(true)
+                            .build()
+            );
+        }
+
+        int requiredMemberCount = fireMembers.size();
+        boolean allQuizCompleted = requiredMemberCount > 0 && quizCompletedCount == requiredMemberCount;
+
+        String myQuizStatus = memberStates.stream()
+                .filter(m -> student.getId().equals(m.getStudentId()))
+                .map(FireteamStateResponse.MemberState::getQuizStatus)
+                .findFirst()
+                .orElse("IN_PROGRESS");
+
+        boolean myExtinguisherCompleted = isStudentMissionCompleted(
+                scenario.getId(),
+                getExtinguisherAssignment.getId(),
+                student.getId()
+        );
+
+        TeamMissionProgressV4 donutProgress = teamMissionProgressRepositoryV4
+                .findByScenario_IdAndAssignment_IdAndTeam_Id(
+                        scenario.getId(),
+                        donutAssignment.getId(),
+                        fireTeam.getId()
+                )
+                .orElse(null);
+
+        int donutRequiredCount = getIntParam(donutAssignment.getParamsJson(), "requiredClickCount", 30);
+        int donutProgressCount = donutProgress != null && donutProgress.getProgressCount() != null
+                ? donutProgress.getProgressCount()
+                : 0;
+
+        String donutStatus = donutProgress != null && donutProgress.getStatus() != null
+                ? donutProgress.getStatus().name()
+                : "LOCKED";
+
+        boolean donutCompleted = donutProgress != null && donutProgress.getStatus() == ProgressStatus.COMPLETED;
+
+        int postQuizWaitSeconds = 5;
+        int waitRemainingSeconds = 0;
+
+        if (allQuizCompleted && allQuizCompletedAt != null) {
+            long elapsed = java.time.Duration.between(allQuizCompletedAt, LocalDateTime.now()).getSeconds();
+            waitRemainingSeconds = (int) Math.max(postQuizWaitSeconds - elapsed, 0);
+        }
+
+        String currentElementId = resolveCurrentElementId(student);
+        String fireOriginElementId = scenario.getDisasterOriginElementId();
+
+        boolean studentAtFireOrigin =
+                fireOriginElementId != null &&
+                        !fireOriginElementId.isBlank() &&
+                        fireOriginElementId.equals(currentElementId);
+
+        String phase;
+        String nextClientAction;
+
+        if (donutCompleted) {
+            phase = "SPRAY_READY";
+            nextClientAction = "START_SPRAY";
+        } else if (!myExtinguisherCompleted) {
+            phase = "GET_EXTINGUISHER";
+            nextClientAction = "FIND_EXTINGUISHER";
+        } else if (!"COMPLETED".equals(myQuizStatus)) {
+            phase = "QUIZ";
+            nextClientAction = "OPEN_QUIZ";
+        } else if (!allQuizCompleted) {
+            phase = "WAITING_TEAM_QUIZ";
+            nextClientAction = "WAIT_TEAM_QUIZ";
+        } else if (waitRemainingSeconds > 0) {
+            phase = "POST_QUIZ_DELAY";
+            nextClientAction = "WAIT_POST_QUIZ_DELAY";
+        } else if (!studentAtFireOrigin) {
+            phase = "DONUT_ACTIVE";
+            nextClientAction = "MOVE_TO_FIRE_ZONE";
+        } else {
+            phase = "DONUT_ACTIVE";
+            nextClientAction = "START_DONUT";
+        }
+
+        boolean canPlayDonut =
+                "DONUT_ACTIVE".equals(phase) &&
+                        "START_DONUT".equals(nextClientAction) &&
+                        studentAtFireOrigin;
+
+        String effectiveDonutStatus = donutStatus;
+
+        if (donutCompleted) {
+            effectiveDonutStatus = "COMPLETED";
+        } else if ("DONUT_ACTIVE".equals(phase) && Boolean.TRUE.equals(canPlayDonut)) {
+            effectiveDonutStatus = "IN_PROGRESS";
+        }
+
+        return FireteamStateResponse.builder()
+                .scenarioId(scenario.getId())
+                .teamId(fireTeam.getId())
+                .teamCode(fireTeam.getTeamCode())
+                .phase(phase)
+                .nextClientAction(nextClientAction)
+                .extinguisherAssignmentId(getExtinguisherAssignment.getId())
+                .quizAssignmentId(quizAssignment.getId())
+                .donutAssignmentId(donutAssignment.getId())
+                .myQuizStatus(myQuizStatus)
+                .allQuizCompleted(allQuizCompleted)
+                .quizRequiredMemberCount(requiredMemberCount)
+                .quizCompletedMemberCount(quizCompletedCount)
+                .members(memberStates)
+                .postQuizWaitSeconds(postQuizWaitSeconds)
+                .waitRemainingSeconds(waitRemainingSeconds)
+                .donutRequiredCount(donutRequiredCount)
+                .donutProgressCount(donutProgressCount)
+                .donutStatus(effectiveDonutStatus)
+                .donutMissionCompleted(donutCompleted)
+                .studentAtFireOrigin(studentAtFireOrigin)
+                .fireOriginElementId(fireOriginElementId)
+                .currentElementId(currentElementId)
+                .canPlayDonut(canPlayDonut)
+                .build();
+    }
+
+    private ScenarioAssignmentV4 findAssignmentByMissionCode(
+            String scenarioId,
+            String missionCode
+    ) {
+        return scenarioAssignmentRepositoryV4
+                .findByScenario_IdOrderByCreatedAtAsc(scenarioId)
+                .stream()
+                .filter(assignment -> missionCode.equals(
+                        extractMissionCodeForScenarioService(
+                                assignment.getParamsJson(),
+                                assignment.getContent() != null ? assignment.getContent().getTitle() : null
+                        )
+                ))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("assignment 없음: " + missionCode));
+    }
+
+    private boolean isStudentMissionCompleted(
+            String scenarioId,
+            String assignmentId,
+            String studentId
+    ) {
+        return studentMissionProgressRepository
+                .findByScenario_IdAndAssignment_IdAndStudent_Id(
+                        scenarioId,
+                        assignmentId,
+                        studentId
+                )
+                .map(progress -> progress.getStatus() == ProgressStatus.COMPLETED)
+                .orElse(false);
+    }
+
+    private String resolveCurrentElementId(StudentV4 student) {
+        if (student.getLastBeacon() == null) {
+            return null;
+        }
+
+        return beaconElementMapRepositoryV4
+                .findByBeacon_Id(student.getLastBeacon().getId())
+                .map(BeaconElementMapV4::getElementId)
+                .orElse(null);
+    }
 }
