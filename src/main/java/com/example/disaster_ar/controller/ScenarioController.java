@@ -259,7 +259,7 @@ public class ScenarioController {
         );
     }
 
-    @Operation(summary = "[26.05.13] 소화기 사용 퀴즈 카드 조회")
+    @Operation(summary = "[26.05.13] 소화기 사용 퀴즈 카드 조회 - Unity 판정형")
     @GetMapping("/{scenarioId}/extinguisher-quiz")
     public ResponseEntity<ExtinguisherQuizResponse> getExtinguisherQuiz(
             @PathVariable String scenarioId
@@ -269,14 +269,15 @@ public class ScenarioController {
         );
     }
 
-    @Operation(summary = "[26.05.13] 소화기 사용 퀴즈 제출")
+    @Deprecated
+    @Operation(summary = "[Deprecated] 소화기 사용 퀴즈 selectedOrder 제출 - /extinguisher-quiz/result 사용")
     @PostMapping("/{scenarioId}/extinguisher-quiz/submit")
-    public ResponseEntity<ExtinguisherQuizSubmitResponse> submitExtinguisherQuiz(
+    public ResponseEntity<?> submitExtinguisherQuiz(
             @PathVariable String scenarioId,
             @RequestBody ExtinguisherQuizSubmitRequest req
     ) {
-        return ResponseEntity.ok(
-                scenarioService.submitExtinguisherQuiz(scenarioId, req)
+        throw new IllegalArgumentException(
+                "이 API는 더 이상 사용하지 않습니다. /api/scenarios/{scenarioId}/extinguisher-quiz/result 를 사용해주세요."
         );
     }
 

@@ -1347,44 +1347,28 @@ public class ScenarioService {
         ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
                 .orElseThrow(() -> new IllegalArgumentException("시나리오가 존재하지 않습니다."));
 
-        List<ExtinguisherQuizResponse.Card> cards = new ArrayList<>();
-
-        cards.add(ExtinguisherQuizResponse.Card.builder()
-                .code("GRAB_EXTINGUISHER")
-                .label("소화기를 잡는다")
-                .imageKey("GRAB_EXTINGUISHER")
-                .build());
-
-        cards.add(ExtinguisherQuizResponse.Card.builder()
-                .code("PULL_PIN")
-                .label("안전핀을 뽑는다")
-                .imageKey("PULL_PIN")
-                .build());
-
-        cards.add(ExtinguisherQuizResponse.Card.builder()
-                .code("AIM_NOZZLE")
-                .label("노즐을 조준한다")
-                .imageKey("AIM_NOZZLE")
-                .build());
-
-        cards.add(ExtinguisherQuizResponse.Card.builder()
-                .code("PRESS_HANDLE")
-                .label("손잡이를 누른다")
-                .imageKey("PRESS_HANDLE")
-                .build());
-
-        // 카드 순서 맞추기 UI용으로 랜덤 섞기
-        Collections.shuffle(cards);
-
         return ExtinguisherQuizResponse.builder()
                 .scenarioId(scenario.getId())
                 .missionCode("FIRETEAM_EXTINGUISHER_QUIZ")
                 .life(3)
                 .cooldownSeconds(10)
-                .cards(cards)
+
+                // Unity가 카드 구성과 정답 판정을 담당한다는 의미
+                .clientManaged(true)
+
+                // 백엔드는 selectedOrder를 공식적으로 판정하지 않음
+                .serverJudgement(false)
+
+                .message("소화기 퀴즈 카드 구성과 정답 판정은 Unity에서 처리합니다. 백엔드는 /extinguisher-quiz/result API로 결과만 반영합니다.")
+
+                // 기존 응답 호환용. 공식 흐름에서는 사용하지 않음.
+                .cards(List.of())
+
                 .build();
     }
 
+    // Deprecated: selectedOrder 서버 판정 방식은 사용하지 않는다.
+    // 공식 API는 submitExtinguisherQuizResult().
     @Transactional
     public ExtinguisherQuizSubmitResponse submitExtinguisherQuiz(
             String scenarioId,
@@ -1522,6 +1506,9 @@ public class ScenarioService {
                 .build();
     }
 
+    // Deprecated: Unity가 로컬에서 퀴즈 정답을 판정하고,
+    // 백엔드는 /extinguisher-quiz/result로 결과만 반영한다.
+    // 이 메서드는 legacy submit fallback용으로만 유지한다.
     private List<String> getCorrectExtinguisherOrder() {
         return List.of(
                 "GRAB_EXTINGUISHER",
