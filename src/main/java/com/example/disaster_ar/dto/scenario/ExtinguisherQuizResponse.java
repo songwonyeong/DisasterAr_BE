@@ -27,5 +27,6 @@ public class ExtinguisherQuizResponse {
     public static class Card {
         private String code;
         private String label;
+        private String imageKey;
     }
 }

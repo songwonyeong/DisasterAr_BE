@@ -1350,23 +1350,27 @@ public class ScenarioService {
         List<ExtinguisherQuizResponse.Card> cards = new ArrayList<>();
 
         cards.add(ExtinguisherQuizResponse.Card.builder()
+                .code("GRAB_EXTINGUISHER")
+                .label("소화기를 잡는다")
+                .imageKey("GRAB_EXTINGUISHER")
+                .build());
+
+        cards.add(ExtinguisherQuizResponse.Card.builder()
                 .code("PULL_PIN")
                 .label("안전핀을 뽑는다")
+                .imageKey("PULL_PIN")
                 .build());
 
         cards.add(ExtinguisherQuizResponse.Card.builder()
                 .code("AIM_NOZZLE")
-                .label("노즐을 불 쪽으로 향한다")
+                .label("노즐을 조준한다")
+                .imageKey("AIM_NOZZLE")
                 .build());
 
         cards.add(ExtinguisherQuizResponse.Card.builder()
-                .code("SQUEEZE_HANDLE")
-                .label("손잡이를 움켜쥔다")
-                .build());
-
-        cards.add(ExtinguisherQuizResponse.Card.builder()
-                .code("SWEEP_SIDE_TO_SIDE")
-                .label("좌우로 쓸듯이 분사한다")
+                .code("PRESS_HANDLE")
+                .label("손잡이를 누른다")
+                .imageKey("PRESS_HANDLE")
                 .build());
 
         // 카드 순서 맞추기 UI용으로 랜덤 섞기
@@ -1520,10 +1524,10 @@ public class ScenarioService {
 
     private List<String> getCorrectExtinguisherOrder() {
         return List.of(
+                "GRAB_EXTINGUISHER",
                 "PULL_PIN",
                 "AIM_NOZZLE",
-                "SQUEEZE_HANDLE",
-                "SWEEP_SIDE_TO_SIDE"
+                "PRESS_HANDLE"
         );
     }
 
@@ -2138,5 +2142,184 @@ public class ScenarioService {
                 .findByBeacon_Id(student.getLastBeacon().getId())
                 .map(BeaconElementMapV4::getElementId)
                 .orElse(null);
+    }
+
+    @Transactional
+    public ExtinguisherQuizResultResponse submitExtinguisherQuizResult(
+            String scenarioId,
+            ExtinguisherQuizResultRequest req
+    ) {
+        ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
+                .orElseThrow(() -> new IllegalArgumentException("시나리오가 존재하지 않습니다."));
+
+        if (req.getStudentId() == null || req.getStudentId().isBlank()) {
+            throw new IllegalArgumentException("studentId는 필수입니다.");
+        }
+
+        if (req.getAssignmentId() == null || req.getAssignmentId().isBlank()) {
+            throw new IllegalArgumentException("assignmentId는 필수입니다.");
+        }
+
+        if (req.getIsCorrect() == null) {
+            throw new IllegalArgumentException("isCorrect는 필수입니다.");
+        }
+
+        StudentV4 student = studentRepository.findById(req.getStudentId())
+                .orElseThrow(() -> new IllegalArgumentException("학생이 존재하지 않습니다."));
+
+        ScenarioAssignmentV4 assignment = scenarioAssignmentRepositoryV4.findById(req.getAssignmentId())
+                .orElseThrow(() -> new IllegalArgumentException("assignment가 존재하지 않습니다."));
+
+        if (assignment.getScenario() == null ||
+                !assignment.getScenario().getId().equals(scenario.getId())) {
+            throw new IllegalArgumentException("해당 assignment는 이 시나리오 소속이 아닙니다.");
+        }
+
+        String missionCode = extractMissionCodeForScenarioService(
+                assignment.getParamsJson(),
+                assignment.getContent() != null ? assignment.getContent().getTitle() : null
+        );
+
+        if (!"FIRETEAM_EXTINGUISHER_QUIZ".equals(missionCode)) {
+            throw new IllegalArgumentException("해당 assignment는 소화기 사용 퀴즈 미션이 아닙니다. missionCode=" + missionCode);
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+
+        boolean isCorrect = Boolean.TRUE.equals(req.getIsCorrect());
+
+        boolean alreadyCompleted = studentMissionProgressRepository
+                .findByScenario_IdAndAssignment_IdAndStudent_Id(
+                        scenario.getId(),
+                        assignment.getId(),
+                        student.getId()
+                )
+                .map(progress -> progress.getStatus() == ProgressStatus.COMPLETED)
+                .orElse(false);
+
+        ScenarioActionEventV4 submitEvent = ScenarioActionEventV4.builder()
+                .id(UUID.randomUUID().toString())
+                .scenario(scenario)
+                .student(student)
+                .actionType(ScenarioActionType.CARD_QUIZ_SUBMIT)
+                .valueText(isCorrect ? "CORRECT" : "FAILED")
+                .metaJson(buildExtinguisherQuizResultMetaJson(
+                        assignment,
+                        isCorrect,
+                        req.getRemainingLife(),
+                        req.getAttemptCount()
+                ))
+                .createdAt(now)
+                .build();
+
+        scenarioActionEventRepositoryV4.save(submitEvent);
+
+        int requiredCount = 1;
+        int progressCount;
+        ProgressStatus progressStatus;
+        boolean missionCompleted;
+        String nextMissionCode;
+
+        if (isCorrect) {
+            progressCount = 1;
+            progressStatus = ProgressStatus.COMPLETED;
+            missionCompleted = true;
+            nextMissionCode = "FIRETEAM_PUT_OUT_FIRE";
+
+            upsertStudentMissionProgress(
+                    scenario,
+                    assignment,
+                    student,
+                    requiredCount,
+                    progressCount,
+                    progressStatus
+            );
+
+            scenarioTriggerRepositoryV4
+                    .findByScenario_IdAndStudent_IdAndAssignment_Id(
+                            scenario.getId(),
+                            student.getId(),
+                            assignment.getId()
+                    )
+                    .ifPresent(trigger -> {
+                        trigger.setStatus("COMPLETED");
+                        scenarioTriggerRepositoryV4.save(trigger);
+                    });
+
+            if (!alreadyCompleted) {
+                ScenarioActionEventV4 completeEvent = ScenarioActionEventV4.builder()
+                        .id(UUID.randomUUID().toString())
+                        .scenario(scenario)
+                        .student(student)
+                        .actionType(ScenarioActionType.MISSION_COMPLETE)
+                        .valueText("FIRETEAM_EXTINGUISHER_QUIZ")
+                        .createdAt(now)
+                        .build();
+
+                scenarioActionEventRepositoryV4.save(completeEvent);
+            }
+
+        } else {
+            // 오답은 완료 처리하지 않음.
+            // 이미 완료된 상태라면 완료 상태를 되돌리지 않음.
+            if (alreadyCompleted) {
+                progressCount = 1;
+                progressStatus = ProgressStatus.COMPLETED;
+                missionCompleted = true;
+                nextMissionCode = "FIRETEAM_PUT_OUT_FIRE";
+            } else {
+                progressCount = 0;
+                progressStatus = ProgressStatus.IN_PROGRESS;
+                missionCompleted = false;
+                nextMissionCode = null;
+
+                upsertStudentMissionProgress(
+                        scenario,
+                        assignment,
+                        student,
+                        requiredCount,
+                        progressCount,
+                        progressStatus
+                );
+            }
+        }
+
+        return ExtinguisherQuizResultResponse.builder()
+                .scenarioId(scenario.getId())
+                .assignmentId(assignment.getId())
+                .studentId(student.getId())
+                .missionCode("FIRETEAM_EXTINGUISHER_QUIZ")
+                .isCorrect(isCorrect)
+                .missionCompleted(missionCompleted)
+                .remainingLife(req.getRemainingLife())
+                .attemptCount(req.getAttemptCount())
+                .requiredCount(requiredCount)
+                .progressCount(progressCount)
+                .status(progressStatus.name())
+                .nextMissionCode(nextMissionCode)
+                .submittedAt(now)
+                .build();
+    }
+
+    private String buildExtinguisherQuizResultMetaJson(
+            ScenarioAssignmentV4 assignment,
+            boolean isCorrect,
+            Integer remainingLife,
+            Integer attemptCount
+    ) {
+        try {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("source", "UNITY_LOCAL_RESULT");
+            map.put("missionCode", "FIRETEAM_EXTINGUISHER_QUIZ");
+            map.put("assignmentId", assignment.getId());
+            map.put("isCorrect", isCorrect);
+            map.put("remainingLife", remainingLife);
+            map.put("attemptCount", attemptCount);
+
+            return new com.fasterxml.jackson.databind.ObjectMapper()
+                    .writeValueAsString(map);
+        } catch (Exception e) {
+            return "{}";
+        }
     }
 }

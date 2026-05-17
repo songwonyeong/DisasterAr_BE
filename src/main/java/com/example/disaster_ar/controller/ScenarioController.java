@@ -302,4 +302,15 @@ public class ScenarioController {
                 scenarioService.getFireteamState(scenarioId, studentId)
         );
     }
+
+    @Operation(summary = "[26.05.17] 소화기 사용 퀴즈 결과 반영")
+    @PostMapping("/{scenarioId}/extinguisher-quiz/result")
+    public ResponseEntity<ExtinguisherQuizResultResponse> submitExtinguisherQuizResult(
+            @PathVariable String scenarioId,
+            @RequestBody ExtinguisherQuizResultRequest req
+    ) {
+        return ResponseEntity.ok(
+                scenarioService.submitExtinguisherQuizResult(scenarioId, req)
+        );
+    }
 }
