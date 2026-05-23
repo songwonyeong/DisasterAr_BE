@@ -36,9 +36,17 @@ public class BeaconTrackingService {
         StudentV4 student = studentRepository.findById(req.getStudentId())
                 .orElseThrow(() -> new IllegalArgumentException("학생이 존재하지 않습니다."));
 
-        if (student.getClassroom() == null || !student.getClassroom().getId().equals(req.getClassroomId())) {
+        ClassroomV4 classroom = student.getClassroom();
+
+        if (classroom == null || !classroom.getId().equals(req.getClassroomId())) {
             throw new IllegalArgumentException("학생이 해당 교실 소속이 아닙니다.");
         }
+
+        if (classroom.getSchool() == null) {
+            throw new IllegalArgumentException("학생 교실에 학교 정보가 없습니다.");
+        }
+
+        String schoolId = classroom.getSchool().getId();
 
         if (req.getScans() == null || req.getScans().isEmpty()) {
             student.setBeaconState(BeaconState.LOST);
@@ -46,39 +54,79 @@ public class BeaconTrackingService {
             return;
         }
 
-        BeaconSignal strongest = req.getScans().stream()
-                .filter(s -> s.getRssi() > -85)
-                .max(Comparator.comparingInt(BeaconSignal::getRssi))
-                .orElse(null);
+        /*
+         * 1차 변경 핵심:
+         * 기존에는 rssi > -85 중 가장 강한 비콘을 바로 골랐지만,
+         * 이제는 active mapping이 있고, mapping.thresholdRssi를 통과한 비콘만 후보로 본다.
+         */
+        BeaconSignal strongest = null;
+        BeaconV4 beacon = null;
+        BeaconElementMapV4 mapping = null;
 
-        if (strongest == null) {
+        for (BeaconSignal scan : req.getScans()) {
+            if (scan == null || scan.getUuid() == null || scan.getUuid().isBlank()) {
+                continue;
+            }
+
+            BeaconV4 candidateBeacon = beaconRepositoryV4
+                    .findBySchool_IdAndUuidAndMajorAndMinor(
+                            schoolId,
+                            scan.getUuid(),
+                            scan.getMajor(),
+                            scan.getMinor()
+                    )
+                    .orElse(null);
+
+            if (candidateBeacon == null) {
+                continue;
+            }
+
+            BeaconElementMapV4 candidateMapping = beaconElementMapRepositoryV4
+                    .findByBeacon_IdAndActiveTrue(candidateBeacon.getId())
+                    .orElse(null);
+
+            if (candidateMapping == null) {
+                continue;
+            }
+
+            int thresholdRssi = candidateMapping.getEffectiveThresholdRssi();
+
+            /*
+             * RSSI는 음수다.
+             * 예:
+             * -70 >= -85  통과
+             * -90 >= -85  실패
+             */
+            if (scan.getRssi() < thresholdRssi) {
+                continue;
+            }
+
+            if (strongest == null || scan.getRssi() > strongest.getRssi()) {
+                strongest = scan;
+                beacon = candidateBeacon;
+                mapping = candidateMapping;
+            }
+        }
+
+        /*
+         * active mapping이 없거나 threshold를 통과한 비콘이 없으면 LOST 처리.
+         */
+        if (strongest == null || beacon == null || mapping == null) {
             student.setBeaconState(BeaconState.LOST);
+            student.setLastBeaconSeenAt(LocalDateTime.now());
             studentRepository.save(student);
             return;
         }
 
-        BeaconV4 beacon = beaconRepositoryV4
-                .findByUuidAndMajorAndMinor(
-                        strongest.getUuid(),
-                        strongest.getMajor(),
-                        strongest.getMinor()
-                )
-                .orElse(null);
-
-        if (beacon == null) {
-            return;
-        }
-
-        if (student.getClassroom().getSchool() == null || beacon.getSchool() == null ||
-                !student.getClassroom().getSchool().getId().equals(beacon.getSchool().getId())) {
-            throw new IllegalArgumentException("학생 교실의 학교와 비콘 학교가 일치하지 않습니다.");
-        }
-
         BeaconV4 previousBeacon = student.getLastBeacon();
 
-        // 튐 방지: 이전 비콘이 있고 다른 비콘이면, 새 RSSI가 5 이상 강할 때만 변경
+        /*
+         * 튐 방지:
+         * 이전 비콘이 있고 다른 비콘이면, 새 RSSI가 기존보다 5 이상 강할 때만 변경.
+         */
         if (previousBeacon != null && !previousBeacon.getId().equals(beacon.getId())) {
             int prevRssi = student.getLastBeaconRssi() != null ? student.getLastBeaconRssi() : -100;
+
             if (strongest.getRssi() < prevRssi + 5) {
                 student.setLastBeaconSeenAt(LocalDateTime.now());
                 student.setBeaconState(BeaconState.DETECTED);
@@ -99,44 +147,53 @@ public class BeaconTrackingService {
         student.setBeaconState(BeaconState.DETECTED);
         studentRepository.save(student);
 
-        if (changed) {
-            ClassroomV4 classroom = student.getClassroom();
-            ScenarioV4 scenario = classroom != null ? classroom.getActiveScenario() : null;
+        ScenarioV4 scenario = classroom.getActiveScenario();
 
-            if (scenario != null) {
-                scenarioTriggerService.triggerByBeacon(
-                        scenario,
-                        classroom,
-                        student,
-                        beacon,
-                        strongest.getRssi()
-                );
-                Optional<BeaconElementMapV4> mapping =
-                        beaconElementMapRepositoryV4.findByBeacon_Id(beacon.getId());
-
-                if (mapping.isPresent()) {
-                    String elementId = mapping.get().getElementId();
-
-                    scenarioTriggerService.triggerByElement(
-                            scenario,
-                            classroom,
-                            student,
-                            elementId,
-                            beacon,
-                            strongest.getRssi()
-                    );
-
-                    completeSafeZoneMissionIfNeeded(
-                            scenario,
-                            classroom,
-                            student,
-                            elementId,
-                            beacon,
-                            strongest.getRssi()
-                    );
-                }
-            }
+        if (scenario == null) {
+            return;
         }
+
+        /*
+         * triggerByBeacon / triggerByElement는 매번 호출해도 된다.
+         * 내부에서 이미 같은 assignment가 trigger됐는지 체크한다.
+         */
+        scenarioTriggerService.triggerByBeacon(
+                scenario,
+                classroom,
+                student,
+                beacon,
+                strongest.getRssi()
+        );
+
+        /*
+         * 기존 elementId가 아니라 zoneElementId 기준으로 처리한다.
+         * getEffectiveZoneElementId()는 zoneElementId가 있으면 zoneElementId,
+         * 없으면 기존 elementId를 fallback으로 반환한다.
+         */
+        String zoneElementId = mapping.getEffectiveZoneElementId();
+
+        if (zoneElementId == null || zoneElementId.isBlank()) {
+            return;
+        }
+
+        scenarioTriggerService.triggerByElement(
+                scenario,
+                classroom,
+                student,
+                zoneElementId,
+                beacon,
+                strongest.getRssi()
+        );
+
+        completeSafeZoneMissionIfNeeded(
+                scenario,
+                classroom,
+                student,
+                zoneElementId,
+                beacon,
+                strongest.getRssi(),
+                mapping
+        );
     }
 
     private void completeSafeZoneMissionIfNeeded(
@@ -145,14 +202,23 @@ public class BeaconTrackingService {
             StudentV4 student,
             String elementId,
             BeaconV4 beacon,
-            Integer rssi
+            Integer rssi,
+            BeaconElementMapV4 mapping
     ) {
         if (scenario == null || classroom == null || student == null || elementId == null || elementId.isBlank()) {
             return;
         }
 
-        if (!isSafeZoneElement(classroom, elementId)) {
-            return;
+        String zoneType = mapping != null ? mapping.getZoneType() : null;
+
+        if (zoneType != null && !zoneType.isBlank()) {
+            if (!isSafeZoneText(zoneType)) {
+                return;
+            }
+        } else {
+            if (!isSafeZoneElement(classroom, elementId)) {
+                return;
+            }
         }
 
         List<ScenarioAssignmentV4> assignments =
@@ -221,6 +287,22 @@ public class BeaconTrackingService {
                 .build();
 
         scenarioActionEventRepositoryV4.save(event);
+    }
+
+    private boolean isSafeZoneText(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+
+        String upper = value.toUpperCase(Locale.ROOT);
+
+        return upper.contains("SAFE_ZONE")
+                || upper.contains("SAFETY_ZONE")
+                || upper.contains("EVACUATION_ZONE")
+                || upper.contains("SAFE")
+                || value.contains("안전구역")
+                || value.contains("대피구역")
+                || value.contains("대피소");
     }
 
     private boolean isSafeZoneElement(ClassroomV4 classroom, String elementId) {

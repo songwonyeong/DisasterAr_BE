@@ -68,6 +68,7 @@ public class RoomService {
     private final StudentItemRepositoryV4 studentItemRepositoryV4;
     private final ScenarioActionEventRepositoryV4 scenarioActionEventRepositoryV4;
     private final TeamMissionProgressRepositoryV4 teamMissionProgressRepositoryV4;
+    private final BeaconAutoMappingService beaconAutoMappingService;
 
 
     public RoomResponse createRoom(RoomCreateRequest req) {
@@ -213,6 +214,7 @@ public class RoomService {
                 .build();
     }
 
+    @Transactional
     public TrainingControlResponse startTraining(String classroomId, TrainingStartRequest req) {
         ClassroomV4 classroom = classroomRepository.findById(classroomId)
                 .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
@@ -224,11 +226,21 @@ public class RoomService {
             throw new IllegalArgumentException("해당 시나리오는 이 교실 소속이 아닙니다.");
         }
 
+        beaconAutoMappingService.syncForActiveMap(classroom);
+
+        /*
+         * 2차:
+         * 훈련 시작 직전에 현재 활성 구조도 기준으로 비콘-구역 매핑을 최신화한다.
+         * RUNNING 전환 전에 실행해야 한다.
+         */
+        beaconAutoMappingService.syncForActiveMap(classroom);
+
         applyDisasterOriginFromActiveMapIfNeeded(classroom, scenario);
         applyRandomScenarioEventIfNeeded(scenario);
         scenarioRepository.save(scenario);
 
         classroom.setTrainingState(TrainingState.RUNNING);
+
         classroom.setTrainingStartedAt(LocalDateTime.now());
         classroom.setTrainingEndedAt(null);
         classroom.setActiveScenario(scenario);
@@ -384,6 +396,7 @@ public class RoomService {
                 .build();
     }
 
+    @Transactional
     public ActiveMapResponse updateActiveMap(String classroomId, ActiveMapUpdateRequest req) {
         ClassroomV4 classroom = classroomRepository.findById(classroomId)
                 .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
@@ -401,6 +414,13 @@ public class RoomService {
         classroom.setUpdatedAt(LocalDateTime.now());
 
         ClassroomV4 saved = classroomRepository.save(classroom);
+
+        /*
+         * 2차:
+         * 활성 구조도 기준으로 비콘이 어느 zone 안에 있는지 자동 판정하고
+         * beacon_element_maps를 자동 갱신한다.
+         */
+        beaconAutoMappingService.syncForActiveMap(saved);
 
         return ActiveMapResponse.builder()
                 .classroomId(saved.getId())
@@ -852,6 +872,7 @@ public class RoomService {
                 .build();
     }
 
+    @Transactional
     public RoomMapVersionDetailResponse updateMapVersion(
             String classroomId,
             String mapVersionId,
@@ -874,8 +895,19 @@ public class RoomService {
 
         RoomMapVersionV4 saved = roomMapVersionRepositoryV4.save(v);
 
+        boolean isActiveMap = classroom.getActiveMapVersion() != null
+                && classroom.getActiveMapVersion().getId().equals(saved.getId());
+
+        if (isActiveMap) {
+            beaconAutoMappingService.syncForActiveMap(classroom);
+        }
+
         boolean isActive = classroom.getActiveMapVersion() != null
                 && classroom.getActiveMapVersion().getId().equals(saved.getId());
+
+        if (isActive) {
+            beaconAutoMappingService.syncForActiveMap(classroom);
+        }
 
         return RoomMapVersionDetailResponse.builder()
                 .mapVersionId(saved.getId())
@@ -2127,6 +2159,40 @@ public class RoomService {
         } catch (Exception e) {
             return "{}";
         }
+    }
+
+    @Transactional
+    public ActiveMapResponse syncBeaconMappingsForActiveMap(String classroomId) {
+        ClassroomV4 classroom = classroomRepository.findById(classroomId)
+                .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
+
+        /*
+         * 운영 정책:
+         * 훈련 중에는 수동 비콘-구역 매핑 재동기화를 막는다.
+         */
+        if (classroom.getTrainingState() == TrainingState.RUNNING) {
+            throw new IllegalStateException("훈련 중에는 비콘 매핑을 재동기화할 수 없습니다.");
+        }
+
+        if (classroom.getActiveMapVersion() == null) {
+            throw new IllegalArgumentException("활성 구조도가 존재하지 않습니다.");
+        }
+
+        beaconAutoMappingService.syncForActiveMap(classroom);
+
+        return ActiveMapResponse.builder()
+                .classroomId(classroom.getId())
+                .activeMapVersionId(
+                        classroom.getActiveMapVersion() != null
+                                ? classroom.getActiveMapVersion().getId()
+                                : null
+                )
+                .label(
+                        classroom.getActiveMapVersion() != null
+                                ? classroom.getActiveMapVersion().getLabel()
+                                : null
+                )
+                .build();
     }
 
 }

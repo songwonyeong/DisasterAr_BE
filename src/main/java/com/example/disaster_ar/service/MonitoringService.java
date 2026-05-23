@@ -1,6 +1,7 @@
 package com.example.disaster_ar.service;
 
 import com.example.disaster_ar.domain.v4.*;
+import com.example.disaster_ar.domain.v4.enums.BeaconState;
 import com.example.disaster_ar.dto.monitoring.*;
 import com.example.disaster_ar.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -39,6 +40,7 @@ public class MonitoringService {
 
         Map<String, List<StudentV4>> studentsByBeaconId = students.stream()
                 .filter(s -> s.getLastBeacon() != null)
+                .filter(s -> s.getBeaconState() == BeaconState.DETECTED)
                 .collect(Collectors.groupingBy(s -> s.getLastBeacon().getId()));
 
         List<MonitoringFloorResponse> floors = parseFloors(
@@ -207,8 +209,11 @@ public class MonitoringService {
             return List.of();
         }
 
+        /*
+         * monitoring-map에서는 active 매핑만 내려준다.
+         */
         List<BeaconElementMapV4> mappings =
-                beaconElementMapRepositoryV4.findBySchool_IdAndFloorIndex(
+                beaconElementMapRepositoryV4.findBySchool_IdAndFloorIndexAndActiveTrue(
                         classroom.getSchool().getId(),
                         floorIndex
                 );
@@ -220,10 +225,31 @@ public class MonitoringService {
                 continue;
             }
 
-            BeaconV4 beacon = mapping.getBeacon();
-            String elementId = mapping.getElementId();
+            if (!mapping.isEffectivelyActive()) {
+                continue;
+            }
 
-            Map<String, Object> element = findElementById(elements, elementId);
+            BeaconV4 beacon = mapping.getBeacon();
+
+            /*
+             * 1차 핵심:
+             * elementId / zoneElementId는 구역 기준.
+             * beaconElementId는 비콘 마커 위치 기준.
+             */
+            String zoneElementId = trimToNull(mapping.getEffectiveZoneElementId());
+            String beaconElementId = trimToNull(mapping.getBeaconElementId());
+
+            Map<String, Object> zoneElement = findElementById(elements, zoneElementId);
+            Map<String, Object> beaconElement = findElementById(elements, beaconElementId);
+
+            /*
+             * 좌표는 beaconElementId가 있으면 비콘 마커 element 기준.
+             * 없으면 zoneElement 기준.
+             * 둘 다 없으면 beacon 테이블의 x/y fallback.
+             */
+            Map<String, Object> positionElement = beaconElement != null
+                    ? beaconElement
+                    : zoneElement;
 
             List<StudentV4> detectedStudents =
                     studentsByBeaconId.getOrDefault(beacon.getId(), List.of());
@@ -236,13 +262,28 @@ public class MonitoringService {
                     BeaconMarkerResponse.builder()
                             .beaconId(beacon.getId())
                             .beaconNo(beacon.getBeaconNo())
-                            .elementId(elementId)
-                            .placementName(resolvePlacementName(element, beacon))
-                            .zoneType(resolveZoneType(element))
-                            .x(resolveDouble(element, "x", beacon.getX()))
-                            .y(resolveDouble(element, "y", beacon.getY()))
-                            .width(resolveDouble(element, "width", null))
-                            .height(resolveDouble(element, "height", null))
+
+                            /*
+                             * 기존 호환용 elementId는 zoneElementId로 내려준다.
+                             */
+                            .elementId(zoneElementId)
+                            .beaconElementId(beaconElementId)
+                            .zoneElementId(zoneElementId)
+
+                            /*
+                             * placementName / zoneType은 mapping snapshot 우선.
+                             * 없으면 구조도 JSON의 zone element에서 fallback.
+                             */
+                            .placementName(resolvePlacementName(mapping, zoneElement, beacon))
+                            .zoneType(resolveZoneType(mapping, zoneElement))
+                            .thresholdRssi(mapping.getEffectiveThresholdRssi())
+                            .isActive(mapping.isEffectivelyActive())
+
+                            .x(resolveDouble(positionElement, "x", beacon.getX()))
+                            .y(resolveDouble(positionElement, "y", beacon.getY()))
+                            .width(resolveDouble(positionElement, "width", null))
+                            .height(resolveDouble(positionElement, "height", null))
+
                             .studentCount(studentResponses.size())
                             .students(studentResponses)
                             .build()
@@ -309,6 +350,38 @@ public class MonitoringService {
         }
 
         return beacon.getName();
+    }
+
+    private String resolvePlacementName(
+            BeaconElementMapV4 mapping,
+            Map<String, Object> zoneElement,
+            BeaconV4 beacon
+    ) {
+        String placementName = trimToNull(mapping.getPlacementName());
+        if (placementName != null) {
+            return placementName;
+        }
+
+        return resolvePlacementName(zoneElement, beacon);
+    }
+
+    private String resolveZoneType(
+            BeaconElementMapV4 mapping,
+            Map<String, Object> zoneElement
+    ) {
+        String zoneType = trimToNull(mapping.getZoneType());
+        if (zoneType != null) {
+            return zoneType;
+        }
+
+        return resolveZoneType(zoneElement);
+    }
+
+    private String trimToNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 
     private String resolveZoneType(Map<String, Object> element) {

@@ -7,7 +7,23 @@ import java.util.List;
 import java.util.Optional;
 
 public interface BeaconRepositoryV4 extends JpaRepository<BeaconV4, String> {
+
     List<BeaconV4> findBySchool_IdOrderByFloorIndexAscBeaconNoAsc(String schoolId);
-    Optional<BeaconV4> findByUuidAndMajorAndMinor(String uuid, Integer major, Integer minor);
-    List<BeaconV4> findBySchool_IdAndFloorIndexOrderByBeaconNoAsc(String schoolId, Integer floorIndex);
+
+    List<BeaconV4> findBySchool_IdAndFloorIndexOrderByBeaconNoAsc(
+            String schoolId,
+            Integer floorIndex
+    );
+
+    /**
+     * 1차 반영 기준:
+     * uuid + major + minor만으로 찾지 말고,
+     * 반드시 학교 기준까지 포함해서 찾는다.
+     */
+    Optional<BeaconV4> findBySchool_IdAndUuidAndMajorAndMinor(
+            String schoolId,
+            String uuid,
+            Integer major,
+            Integer minor
+    );
 }

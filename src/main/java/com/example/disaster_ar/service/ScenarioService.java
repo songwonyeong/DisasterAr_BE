@@ -1801,10 +1801,14 @@ public class ScenarioService {
         }
 
         BeaconElementMapV4 mapping = beaconElementMapRepositoryV4
-                .findByBeacon_Id(student.getLastBeacon().getId())
-                .orElseThrow(() -> new IllegalArgumentException("현재 비콘의 구조도 element 매핑이 없습니다."));
+                .findByBeacon_IdAndActiveTrue(student.getLastBeacon().getId())
+                .orElseThrow(() -> new IllegalArgumentException("현재 비콘의 활성 구조도 element 매핑이 없습니다."));
 
-        String currentElementId = mapping.getElementId();
+        String currentElementId = mapping.getEffectiveZoneElementId();
+
+        if (currentElementId == null || currentElementId.isBlank()) {
+            throw new IllegalArgumentException("현재 비콘의 zoneElementId 정보가 없습니다.");
+        }
 
         if (!scenario.getDisasterOriginElementId().equals(currentElementId)) {
             throw new IllegalArgumentException("화재 발생 구역에 도착해야 도넛 게임을 진행할 수 있습니다.");
@@ -2126,8 +2130,8 @@ public class ScenarioService {
         }
 
         return beaconElementMapRepositoryV4
-                .findByBeacon_Id(student.getLastBeacon().getId())
-                .map(BeaconElementMapV4::getElementId)
+                .findByBeacon_IdAndActiveTrue(student.getLastBeacon().getId())
+                .map(BeaconElementMapV4::getEffectiveZoneElementId)
                 .orElse(null);
     }
 

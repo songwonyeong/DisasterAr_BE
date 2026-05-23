@@ -275,4 +275,14 @@ public class RoomController {
 
         return ResponseEntity.ok(result);
     }
+
+    @Operation(summary = "[26.05.23] 활성 구조도 기준 비콘-구역 매핑 자동 동기화")
+    @PostMapping("/{classroomId}/beacon-mappings/sync")
+    public ResponseEntity<ActiveMapResponse> syncBeaconMappingsForActiveMap(
+            @PathVariable String classroomId
+    ) {
+        return ResponseEntity.ok(
+                roomService.syncBeaconMappingsForActiveMap(classroomId)
+        );
+    }
 }
