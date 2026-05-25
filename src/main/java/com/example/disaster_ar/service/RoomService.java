@@ -466,8 +466,6 @@ public class RoomService {
             throw new IllegalArgumentException("해당 시나리오는 이 교실 소속이 아닙니다.");
         }
 
-        beaconAutoMappingService.syncForActiveMap(classroom);
-
         /*
          * 2차:
          * 훈련 시작 직전에 현재 활성 구조도 기준으로 비콘-구역 매핑을 최신화한다.
@@ -1134,13 +1132,6 @@ public class RoomService {
         if (req.getFloorsJson() != null) v.setFloorsJson(req.getFloorsJson());
 
         RoomMapVersionV4 saved = roomMapVersionRepositoryV4.save(v);
-
-        boolean isActiveMap = classroom.getActiveMapVersion() != null
-                && classroom.getActiveMapVersion().getId().equals(saved.getId());
-
-        if (isActiveMap) {
-            beaconAutoMappingService.syncForActiveMap(classroom);
-        }
 
         boolean isActive = classroom.getActiveMapVersion() != null
                 && classroom.getActiveMapVersion().getId().equals(saved.getId());

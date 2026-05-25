@@ -228,12 +228,12 @@ public class ScenarioController {
         return ResponseEntity.ok().build();
     }
 
-    @Operation(summary = "[26.05.06] 랜덤 퀴즈 문제 조회")
+    @Operation(summary = "[26.05.25] 학생별 중복 방지 랜덤 퀴즈 문제 조회")
     @GetMapping("/{scenarioId}/random-quiz")
     public ResponseEntity<RandomQuizResponse> getRandomQuiz(
             @PathVariable String scenarioId,
-            @RequestParam(required = false) String studentId,
-            @RequestParam(required = false) String assignmentId
+            @RequestParam String studentId,
+            @RequestParam String assignmentId
     ) {
         return ResponseEntity.ok(
                 scenarioService.getRandomQuiz(scenarioId, studentId, assignmentId)

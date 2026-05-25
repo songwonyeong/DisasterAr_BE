@@ -1074,6 +1074,7 @@ public class ScenarioService {
         scenarioRepository.delete(scenario);
     }
 
+    @Transactional
     public RandomQuizResponse getRandomQuiz(
             String scenarioId,
             String studentId,
@@ -1089,32 +1090,25 @@ public class ScenarioService {
         }
 
         /*
-         * studentId / assignmentId 없이 호출하면 기존처럼 전체 퀴즈 중 랜덤 반환.
-         * 단, 이 경우 중복 방지는 불가능함.
+         * 중복 발급 방지를 위해 studentId + assignmentId는 필수로 본다.
+         * 이 값 없이 랜덤을 내려주면 학생별 발급 이력을 추적할 수 없다.
          */
-        if (studentId == null || studentId.isBlank()
-                || assignmentId == null || assignmentId.isBlank()) {
-
-            ContentV4 quiz = quizzes.get(new Random().nextInt(quizzes.size()));
-
-            return RandomQuizResponse.builder()
-                    .available(true)
-                    .contentId(quiz.getId())
-                    .quizType(quiz.getQuizType() != null ? quiz.getQuizType().name() : null)
-                    .question(quiz.getQuestion())
-                    .option1(quiz.getOption1())
-                    .option2(quiz.getOption2())
-                    .option3(quiz.getOption3())
-                    .option4(quiz.getOption4())
-                    .submittedCount(null)
-                    .remainingCount(null)
-                    .totalQuizCount(null)
-                    .message(null)
-                    .build();
+        if (studentId == null || studentId.isBlank()) {
+            throw new IllegalArgumentException("랜덤 퀴즈 조회에는 studentId가 필요합니다.");
         }
 
-        studentRepository.findById(studentId)
+        if (assignmentId == null || assignmentId.isBlank()) {
+            throw new IllegalArgumentException("랜덤 퀴즈 조회에는 assignmentId가 필요합니다.");
+        }
+
+        StudentV4 student = studentRepository.findById(studentId)
                 .orElseThrow(() -> new IllegalArgumentException("학생이 존재하지 않습니다."));
+
+        if (student.getClassroom() == null
+                || scenario.getClassroom() == null
+                || !student.getClassroom().getId().equals(scenario.getClassroom().getId())) {
+            throw new IllegalArgumentException("학생이 해당 시나리오 교실 소속이 아닙니다.");
+        }
 
         ScenarioAssignmentV4 assignment = scenarioAssignmentRepositoryV4.findById(assignmentId)
                 .orElseThrow(() -> new IllegalArgumentException("assignment가 존재하지 않습니다."));
@@ -1122,6 +1116,10 @@ public class ScenarioService {
         if (assignment.getScenario() == null
                 || !assignment.getScenario().getId().equals(scenario.getId())) {
             throw new IllegalArgumentException("해당 assignment는 이 시나리오 소속이 아닙니다.");
+        }
+
+        if (assignment.getAssignmentType() != AssignmentType.QUIZ) {
+            throw new IllegalArgumentException("랜덤 퀴즈 assignment가 아닙니다.");
         }
 
         int totalQuizCount = getIntParam(assignment.getParamsJson(), "totalQuizCount", 5);
@@ -1144,23 +1142,84 @@ public class ScenarioService {
                     .build();
         }
 
-        Set<String> submittedSet = new HashSet<>(submittedContentIds);
+        /*
+         * 핵심:
+         * 이미 발급됐지만 아직 제출하지 않은 퀴즈가 있으면
+         * 새 퀴즈를 뽑지 않고 그 퀴즈를 다시 내려준다.
+         */
+        Optional<String> pendingContentIdOpt =
+                scenarioActionEventRepositoryV4.findPendingRandomQuizContentId(
+                        scenarioId,
+                        assignmentId,
+                        studentId
+                );
+
+        if (pendingContentIdOpt.isPresent()) {
+            ContentV4 pendingQuiz = contentRepository.findById(pendingContentIdOpt.get())
+                    .orElse(null);
+
+            if (pendingQuiz != null && pendingQuiz.getContentType() == ContentType.QUIZ) {
+                return RandomQuizResponse.builder()
+                        .available(true)
+                        .contentId(pendingQuiz.getId())
+                        .quizType(pendingQuiz.getQuizType() != null ? pendingQuiz.getQuizType().name() : null)
+                        .question(pendingQuiz.getQuestion())
+                        .option1(pendingQuiz.getOption1())
+                        .option2(pendingQuiz.getOption2())
+                        .option3(pendingQuiz.getOption3())
+                        .option4(pendingQuiz.getOption4())
+                        .submittedCount(submittedCount)
+                        .remainingCount(totalQuizCount - submittedCount)
+                        .totalQuizCount(totalQuizCount)
+                        .message("이미 발급된 미제출 랜덤 퀴즈입니다.")
+                        .build();
+            }
+        }
+
+        /*
+         * 새 퀴즈를 뽑을 때는
+         * 1. 이미 제출한 contentId
+         * 2. 이미 발급한 contentId
+         * 를 모두 제외한다.
+         */
+        Set<String> excludedContentIds = new HashSet<>();
+
+        if (submittedContentIds != null) {
+            excludedContentIds.addAll(submittedContentIds);
+        }
+
+        List<String> issuedContentIds =
+                scenarioActionEventRepositoryV4.findIssuedRandomQuizContentIds(
+                        scenarioId,
+                        assignmentId,
+                        studentId
+                );
+
+        if (issuedContentIds != null) {
+            excludedContentIds.addAll(issuedContentIds);
+        }
 
         List<ContentV4> availableQuizzes = quizzes.stream()
-                .filter(q -> !submittedSet.contains(q.getId()))
+                .filter(q -> !excludedContentIds.contains(q.getId()))
                 .toList();
 
         if (availableQuizzes.isEmpty()) {
             return RandomQuizResponse.builder()
                     .available(false)
                     .submittedCount(submittedCount)
-                    .remainingCount(0)
+                    .remainingCount(Math.max(totalQuizCount - submittedCount, 0))
                     .totalQuizCount(totalQuizCount)
                     .message("출제 가능한 퀴즈가 없습니다.")
                     .build();
         }
 
         ContentV4 quiz = availableQuizzes.get(new Random().nextInt(availableQuizzes.size()));
+
+        /*
+         * 새로 뽑은 퀴즈는 발급 이력으로 저장한다.
+         * 이후 같은 학생이 제출 전 다시 조회하면 같은 contentId를 반환한다.
+         */
+        saveRandomQuizIssueEvent(scenario, assignment, student, quiz);
 
         return RandomQuizResponse.builder()
                 .available(true)
@@ -1176,6 +1235,42 @@ public class ScenarioService {
                 .totalQuizCount(totalQuizCount)
                 .message(null)
                 .build();
+    }
+
+    private void saveRandomQuizIssueEvent(
+            ScenarioV4 scenario,
+            ScenarioAssignmentV4 assignment,
+            StudentV4 student,
+            ContentV4 quiz
+    ) {
+        Map<String, Object> meta = new LinkedHashMap<>();
+        meta.put("eventType", "RANDOM_QUIZ_ISSUED");
+        meta.put("assignmentId", assignment.getId());
+        meta.put("contentId", quiz.getId());
+        meta.put("quizType", quiz.getQuizType() != null ? quiz.getQuizType().name() : null);
+        meta.put("studentId", student.getId());
+
+        ScenarioActionEventV4 event = ScenarioActionEventV4.builder()
+                .id(UUID.randomUUID().toString())
+                .scenario(scenario)
+                .classroom(scenario.getClassroom())
+                .student(student)
+                .actionType(ScenarioActionType.QUIZ_TRIGGER)
+                /*
+                 * elementId는 원래 구조도 element ID 용도지만,
+                 * 기존 schema를 재사용하기 위해 랜덤 퀴즈 발급 이력에서는 assignmentId를 저장한다.
+                 * 조회 쿼리에서도 element_id = assignmentId 기준으로 사용한다.
+                 */
+                .elementId(assignment.getId())
+                /*
+                 * valueText에는 발급한 quiz contentId를 저장한다.
+                 */
+                .valueText(quiz.getId())
+                .metaJson(writeJsonSafely(meta))
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        scenarioActionEventRepositoryV4.save(event);
     }
 
     public CallQuizResponse getCallQuiz(String scenarioId) {

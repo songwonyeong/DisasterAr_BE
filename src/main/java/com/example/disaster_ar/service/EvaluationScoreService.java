@@ -160,47 +160,56 @@ public class EvaluationScoreService {
             String missionCode
     ) {
         String sql = """
-            select count(*)
-            from student_mission_progress smp
-            join scenario_assignments sa
-              on smp.assignment_id = sa.id
-            left join contents c
-              on sa.content_id = c.id
-            where smp.scenario_id = :scenarioId
-              and smp.student_id = :studentId
-              and smp.status = 'COMPLETED'
-              and (
-                    coalesce(sa.params_json, '') like concat('%', :missionCode, '%')
-                    or (
-                        :missionCode = 'COMMON_REPORT_CALL'
-                        and c.title in ('전화 미션', '119 신고 순서 맞추기')
-                    )
-                    or (
-                        :missionCode = 'COMMON_FIND_EXTINGUISHER'
-                        and c.title = '소화기 찾기'
-                    )
-                    or (
-                        :missionCode = 'COMMON_SAFE_ZONE'
-                        and c.title = '제한 시간 내 안전구역 도착'
-                    )
-                    or (
-                        :missionCode = 'COMMON_RANDOM_QUIZ'
-                        and c.title = '랜덤 퀴즈 3개 이상 맞추기'
-                    )
-                    or (
-                        :missionCode = 'FIRETEAM_GET_EXTINGUISHER'
-                        and c.title = '소화팀: 소화기 획득'
-                    )
-                    or (
-                        :missionCode = 'FIRETEAM_EXTINGUISHER_QUIZ'
-                        and c.title = '소화팀: 소화기 사용 퀴즈'
-                    )
-                    or (
-                        :missionCode = 'FIRETEAM_PUT_OUT_FIRE'
-                        and c.title = '소화팀: 도넛 게임으로 불 끄기'
-                    )
-              )
-        """;
+        select count(*)
+        from student_mission_progress smp
+        join scenario_assignments sa
+          on smp.assignment_id = sa.id
+        left join contents c
+          on sa.content_id = c.id
+        where smp.scenario_id = :scenarioId
+          and smp.student_id = :studentId
+          and smp.status = 'COMPLETED'
+          and (
+                (
+                    case
+                        when json_valid(sa.params_json)
+                        then json_unquote(json_extract(sa.params_json, '$.missionCode'))
+                        else null
+                    end
+                ) = :missionCode
+
+                or coalesce(sa.params_json, '') like concat('%', :missionCode, '%')
+
+                or (
+                    :missionCode = 'COMMON_REPORT_CALL'
+                    and c.title in ('전화 미션', '119 신고 순서 맞추기')
+                )
+                or (
+                    :missionCode = 'COMMON_FIND_EXTINGUISHER'
+                    and c.title = '소화기 찾기'
+                )
+                or (
+                    :missionCode = 'COMMON_SAFE_ZONE'
+                    and c.title = '제한 시간 내 안전구역 도착'
+                )
+                or (
+                    :missionCode = 'COMMON_RANDOM_QUIZ'
+                    and c.title = '랜덤 퀴즈 3개 이상 맞추기'
+                )
+                or (
+                    :missionCode = 'FIRETEAM_GET_EXTINGUISHER'
+                    and c.title = '소화팀: 소화기 획득'
+                )
+                or (
+                    :missionCode = 'FIRETEAM_EXTINGUISHER_QUIZ'
+                    and c.title = '소화팀: 소화기 사용 퀴즈'
+                )
+                or (
+                    :missionCode = 'FIRETEAM_PUT_OUT_FIRE'
+                    and c.title = '소화팀: 도넛 게임으로 불 끄기'
+                )
+          )
+    """;
 
         return toInt(
                 entityManager.createNativeQuery(sql)
