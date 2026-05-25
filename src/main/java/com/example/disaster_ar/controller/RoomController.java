@@ -71,7 +71,7 @@ public class RoomController {
     /**
      * 방 삭제 (방 만든 사람만 가능)
      */
-    @Operation(summary = "방 삭제 (방 생성자만 가능)")
+    @Operation(summary = "[26.05.25] 방 삭제 안정화 API (방 생성자만 가능)")
     @DeleteMapping("/{classroomId}")
     public ResponseEntity<Void> deleteRoom(
             @PathVariable String classroomId,

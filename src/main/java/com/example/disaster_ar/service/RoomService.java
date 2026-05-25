@@ -36,6 +36,7 @@ import com.example.disaster_ar.domain.v4.TeamMissionProgressV4;
 import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
+import jakarta.persistence.EntityManager;
 
 import com.example.disaster_ar.domain.v4.enums.AcquiredSource;
 import com.example.disaster_ar.domain.v4.enums.ScenarioActionType;
@@ -69,6 +70,7 @@ public class RoomService {
     private final ScenarioActionEventRepositoryV4 scenarioActionEventRepositoryV4;
     private final TeamMissionProgressRepositoryV4 teamMissionProgressRepositoryV4;
     private final BeaconAutoMappingService beaconAutoMappingService;
+    private final EntityManager entityManager;
 
 
     public RoomResponse createRoom(RoomCreateRequest req) {
@@ -124,15 +126,253 @@ public class RoomService {
         return toDto(saved);
     }
 
+    @Transactional
     public void deleteRoom(String classroomId, String userId) {
-        ClassroomV4 c = classroomRepository.findById(classroomId)
+        ClassroomV4 classroom = classroomRepository.findById(classroomId)
                 .orElseThrow(() -> new IllegalArgumentException("방이 존재하지 않습니다."));
 
-        if (c.getOwner() == null || !c.getOwner().getId().equals(userId)) {
+        if (classroom.getOwner() == null || !classroom.getOwner().getId().equals(userId)) {
             throw new IllegalArgumentException("이 방을 삭제할 권한이 없습니다.");
         }
 
-        classroomRepository.delete(c);
+        if (classroom.getTrainingState() == TrainingState.RUNNING) {
+            throw new IllegalStateException("훈련 중인 방은 삭제할 수 없습니다. 훈련 종료 후 삭제해주세요.");
+        }
+
+        deleteClassroomGraph(classroom);
+    }
+
+    private void deleteClassroomGraph(ClassroomV4 classroom) {
+        String classroomId = classroom.getId();
+
+        /*
+         * classrooms가 scenarios, room_map_versions를 active FK로 물고 있으므로
+         * 먼저 참조를 끊는다.
+         */
+        classroom.setActiveScenario(null);
+        classroom.setActiveMapVersion(null);
+        classroom.setTrainingState(TrainingState.WAITING);
+        classroom.setTrainingStartedAt(null);
+        classroom.setTrainingEndedAt(null);
+        classroom.setUpdatedAt(LocalDateTime.now());
+
+        classroomRepository.saveAndFlush(classroom);
+
+        /*
+         * 이후 native delete를 사용할 것이므로,
+         * JPA 영속성 컨텍스트에 남아있는 classroom 상태를 비운다.
+         */
+        entityManager.clear();
+
+        /*
+         * 삭제 순서 중요.
+         * FK를 물고 있는 하위 테이블부터 지우고,
+         * 마지막에 students, room_map_versions, classrooms를 지운다.
+         */
+
+        executeDelete("""
+        delete from evaluations
+        where scenario_id in (
+            select id from scenarios where classroom_id = :classroomId
+        )
+        or student_id in (
+            select id from students where classroom_id = :classroomId
+        )
+        or team_id in (
+            select st.id
+            from scenario_teams st
+            join scenarios s on st.scenario_id = s.id
+            where s.classroom_id = :classroomId
+        )
+    """, classroomId);
+
+        executeDelete("""
+        delete from scenario_action_events
+        where classroom_id = :classroomId
+        or scenario_id in (
+            select id from scenarios where classroom_id = :classroomId
+        )
+        or student_id in (
+            select id from students where classroom_id = :classroomId
+        )
+    """, classroomId);
+
+        executeDelete("""
+        delete from chat_messages
+        where classroom_id = :classroomId
+        or scenario_id in (
+            select id from scenarios where classroom_id = :classroomId
+        )
+        or student_id in (
+            select id from students where classroom_id = :classroomId
+        )
+    """, classroomId);
+
+        executeDelete("""
+        delete from student_beacon_events
+        where scenario_id in (
+            select id from scenarios where classroom_id = :classroomId
+        )
+        or student_id in (
+            select id from students where classroom_id = :classroomId
+        )
+    """, classroomId);
+
+        executeDelete("""
+        delete from quiz_submissions
+        where scenario_id in (
+            select id from scenarios where classroom_id = :classroomId
+        )
+        or student_id in (
+            select id from students where classroom_id = :classroomId
+        )
+    """, classroomId);
+
+        executeDelete("""
+        delete from card_quiz_submissions
+        where scenario_id in (
+            select id from scenarios where classroom_id = :classroomId
+        )
+        or student_id in (
+            select id from students where classroom_id = :classroomId
+        )
+    """, classroomId);
+
+        executeDelete("""
+        delete from student_items
+        where scenario_id in (
+            select id from scenarios where classroom_id = :classroomId
+        )
+        or student_id in (
+            select id from students where classroom_id = :classroomId
+        )
+    """, classroomId);
+
+        executeDelete("""
+        delete from scenario_triggers
+        where scenario_id in (
+            select id from scenarios where classroom_id = :classroomId
+        )
+        or student_id in (
+            select id from students where classroom_id = :classroomId
+        )
+    """, classroomId);
+
+        executeDelete("""
+        delete from student_mission_progress
+        where scenario_id in (
+            select id from scenarios where classroom_id = :classroomId
+        )
+        or student_id in (
+            select id from students where classroom_id = :classroomId
+        )
+    """, classroomId);
+
+        executeDelete("""
+        delete from team_mission_step_progress
+        where scenario_id in (
+            select id from scenarios where classroom_id = :classroomId
+        )
+        or team_id in (
+            select st.id
+            from scenario_teams st
+            join scenarios s on st.scenario_id = s.id
+            where s.classroom_id = :classroomId
+        )
+    """, classroomId);
+
+        executeDelete("""
+        delete from team_mission_progress
+        where scenario_id in (
+            select id from scenarios where classroom_id = :classroomId
+        )
+        or team_id in (
+            select st.id
+            from scenario_teams st
+            join scenarios s on st.scenario_id = s.id
+            where s.classroom_id = :classroomId
+        )
+    """, classroomId);
+
+        executeDelete("""
+        delete from scenario_team_members
+        where scenario_id in (
+            select id from scenarios where classroom_id = :classroomId
+        )
+        or student_id in (
+            select id from students where classroom_id = :classroomId
+        )
+        or team_id in (
+            select st.id
+            from scenario_teams st
+            join scenarios s on st.scenario_id = s.id
+            where s.classroom_id = :classroomId
+        )
+    """, classroomId);
+
+        executeDelete("""
+        delete from scenario_npcs
+        where scenario_id in (
+            select id from scenarios where classroom_id = :classroomId
+        )
+    """, classroomId);
+
+        /*
+         * scenario_assignments는 target_team_id로 scenario_teams를 참조할 수 있으므로
+         * scenario_teams보다 먼저 삭제한다.
+         */
+        executeDelete("""
+        delete from scenario_assignments
+        where classroom_id = :classroomId
+        or scenario_id in (
+            select id from scenarios where classroom_id = :classroomId
+        )
+    """, classroomId);
+
+        executeDelete("""
+        delete from scenario_teams
+        where scenario_id in (
+            select id from scenarios where classroom_id = :classroomId
+        )
+    """, classroomId);
+
+        /*
+         * 이제 scenario 하위 데이터가 지워졌으므로 scenarios 삭제.
+         */
+        executeDelete("""
+        delete from scenarios
+        where classroom_id = :classroomId
+    """, classroomId);
+
+        /*
+         * students는 여러 테이블에서 참조하므로 거의 마지막에 삭제.
+         */
+        executeDelete("""
+        delete from students
+        where classroom_id = :classroomId
+    """, classroomId);
+
+        /*
+         * room_map_versions는 classroom.active_map_version_id와 scenarios.map_version_id 참조를 끊은 뒤 삭제.
+         */
+        executeDelete("""
+        delete from room_map_versions
+        where classroom_id = :classroomId
+    """, classroomId);
+
+        /*
+         * 마지막으로 classroom 삭제.
+         */
+        executeDelete("""
+        delete from classrooms
+        where id = :classroomId
+    """, classroomId);
+    }
+
+    private int executeDelete(String sql, String classroomId) {
+        return entityManager.createNativeQuery(sql)
+                .setParameter("classroomId", classroomId)
+                .executeUpdate();
     }
 
     public RoomResponse regenerateJoinCode(String classroomId, String userId) {
