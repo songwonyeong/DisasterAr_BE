@@ -27,6 +27,8 @@ public class ScenarioEvaluationDetailResponse {
     public static class EvaluationSummary {
         private String evaluationId;
         private Double scoreTotal;
+        private String scoreJson;
+        private String detailsJson;
         private String feedbackText;
         private LocalDateTime createdAt;
     }
@@ -40,6 +42,8 @@ public class ScenarioEvaluationDetailResponse {
         private String evaluationId;
         private String studentId;
         private Double scoreTotal;
+        private String scoreJson;
+        private String detailsJson;
         private String feedbackText;
         private LocalDateTime createdAt;
     }

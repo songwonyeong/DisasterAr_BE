@@ -148,6 +148,7 @@ public class ScenarioController {
         );
     }
 
+    @Operation(summary = "[26.05.25] 시나리오 평가 점수 계산")
     @PostMapping("/{scenarioId}/evaluate")
     public ResponseEntity<ScenarioEvaluateResponse> evaluateScenario(
             @PathVariable String scenarioId
@@ -155,6 +156,7 @@ public class ScenarioController {
         return ResponseEntity.ok(scenarioService.evaluateScenario(scenarioId));
     }
 
+    @Operation(summary = "[26.05.25] 시나리오 평가 결과 조회")
     @GetMapping("/{scenarioId}/evaluations")
     public ResponseEntity<ScenarioEvaluationDetailResponse> getEvaluations(
             @PathVariable String scenarioId

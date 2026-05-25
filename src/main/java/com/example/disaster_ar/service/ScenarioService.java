@@ -11,6 +11,8 @@ import com.example.disaster_ar.domain.v4.ContentV4;
 import com.example.disaster_ar.domain.v4.enums.ContentType;
 import com.example.disaster_ar.dto.scenario.RandomQuizResponse;
 import com.example.disaster_ar.repository.ContentRepository;
+import com.example.disaster_ar.dto.evaluation.StudentScoreBreakdown;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -38,6 +40,8 @@ public class ScenarioService {
     private final ScenarioTeamRepositoryV4 scenarioTeamRepositoryV4;
     private final ScenarioTeamMemberRepositoryV4 scenarioTeamMemberRepositoryV4;
     private final BeaconElementMapRepositoryV4 beaconElementMapRepositoryV4;
+    private final EvaluationScoreService evaluationScoreService;
+    private final ObjectMapper objectMapper;
 
 
     public ScenarioResponse create(ScenarioCreateRequest req) {
@@ -703,55 +707,40 @@ public class ScenarioService {
                 .build();
     }
 
+    @Transactional
     public ScenarioEvaluateResponse evaluateScenario(String scenarioId) {
         ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
                 .orElseThrow(() -> new IllegalArgumentException("시나리오 없음"));
+
+        /*
+         * A안:
+         * 같은 시나리오를 재평가할 때 기존 평가 결과를 삭제하고
+         * 최신 기준으로 다시 생성한다.
+         */
+        evaluationRepositoryV4.deleteByScenario_Id(scenarioId);
 
         List<StudentV4> students = studentRepository.findByClassroom_IdOrderByJoinedAtAsc(
                 scenario.getClassroom().getId()
         );
 
-        List<ScenarioEvaluateResponse.StudentEvaluationItem> studentResults = new java.util.ArrayList<>();
+        List<ScenarioEvaluateResponse.StudentEvaluationItem> studentResults = new ArrayList<>();
+
         double totalScore = 0.0;
         int counted = 0;
 
         for (StudentV4 student : students) {
-            double score = 0.0;
+            StudentScoreBreakdown breakdown =
+                    evaluationScoreService.calculateStudentScore(
+                            scenarioId,
+                            student.getId()
+                    );
 
-            long completedMissionCount = studentMissionProgressRepository
-                    .findAll()
-                    .stream()
-                    .filter(p ->
-                            p.getScenario().getId().equals(scenarioId) &&
-                                    p.getStudent().getId().equals(student.getId()) &&
-                                    p.getStatus() == ProgressStatus.COMPLETED
-                    )
-                    .count();
+            double score = breakdown.getTotal() != null ? breakdown.getTotal() : 0.0;
 
-            long correctQuizCount = quizSubmissionRepositoryV4
-                    .findAll()
-                    .stream()
-                    .filter(q ->
-                            q.getScenario().getId().equals(scenarioId) &&
-                                    q.getStudent().getId().equals(student.getId()) &&
-                                    Boolean.TRUE.equals(q.getIsCorrect())
-                    )
-                    .count();
-
-            long correctCardQuizCount = cardQuizSubmissionRepositoryV4
-                    .findAll()
-                    .stream()
-                    .filter(q ->
-                            q.getScenario().getId().equals(scenarioId) &&
-                                    q.getStudent().getId().equals(student.getId()) &&
-                                    Boolean.TRUE.equals(q.getIsCorrect())
-                    )
-                    .count();
-
-            score += completedMissionCount * 50.0;
-            score += correctQuizCount * 20.0;
-            score += correctCardQuizCount * 30.0;
-
+            /*
+             * 기존 정책 유지:
+             * 퇴출 학생이면 -20점.
+             */
             if (Boolean.TRUE.equals(student.getIsKicked())) {
                 score -= 20.0;
             }
@@ -760,9 +749,19 @@ public class ScenarioService {
                 score = 0.0;
             }
 
-            String feedback = "미션 완료 " + completedMissionCount +
-                    "개, 퀴즈 정답 " + correctQuizCount +
-                    "개, 카드퀴즈 정답 " + correctCardQuizCount + "개";
+            breakdown.setTotal(score);
+
+            String scoreJson = writeJsonSafely(Map.of(
+                    "quiz", breakdown.getQuiz(),
+                    "role", breakdown.getRole(),
+                    "personal", breakdown.getPersonal(),
+                    "safezone", breakdown.getSafezone(),
+                    "total", breakdown.getTotal()
+            ));
+
+            String detailsJson = writeJsonSafely(breakdown);
+
+            String feedback = buildEvaluationFeedback(breakdown, student);
 
             EvaluationV4 studentEval = EvaluationV4.builder()
                     .id(UUID.randomUUID().toString())
@@ -770,6 +769,8 @@ public class ScenarioService {
                     .level(EvalLevel.STUDENT)
                     .student(student)
                     .scoreTotal(score)
+                    .scoreJson(scoreJson)
+                    .detailsJson(detailsJson)
                     .feedbackText(feedback)
                     .createdAt(LocalDateTime.now())
                     .build();
@@ -780,6 +781,11 @@ public class ScenarioService {
                     ScenarioEvaluateResponse.StudentEvaluationItem.builder()
                             .studentId(student.getId())
                             .scoreTotal(score)
+                            .quizScore(breakdown.getQuiz())
+                            .roleScore(breakdown.getRole())
+                            .personalScore(breakdown.getPersonal())
+                            .safezoneScore(breakdown.getSafezone())
+                            .correctQuizCount(breakdown.getCorrectQuizCount())
                             .feedbackText(feedback)
                             .build()
             );
@@ -790,11 +796,25 @@ public class ScenarioService {
 
         double scenarioScore = counted > 0 ? totalScore / counted : 0.0;
 
+        String scenarioScoreJson = writeJsonSafely(Map.of(
+                "average", scenarioScore,
+                "studentCount", counted,
+                "totalStudentScore", totalScore
+        ));
+
+        String scenarioDetailsJson = writeJsonSafely(Map.of(
+                "evaluatedStudentCount", counted,
+                "averageScore", scenarioScore,
+                "totalStudentScore", totalScore
+        ));
+
         EvaluationV4 scenarioEval = EvaluationV4.builder()
                 .id(UUID.randomUUID().toString())
                 .scenario(scenario)
                 .level(EvalLevel.SCENARIO)
                 .scoreTotal(scenarioScore)
+                .scoreJson(scenarioScoreJson)
+                .detailsJson(scenarioDetailsJson)
                 .feedbackText("학생 " + counted + "명 평균 점수")
                 .createdAt(LocalDateTime.now())
                 .build();
@@ -807,6 +827,47 @@ public class ScenarioService {
                 .evaluatedStudentCount(counted)
                 .studentEvaluations(studentResults)
                 .build();
+    }
+
+    private String buildEvaluationFeedback(
+            StudentScoreBreakdown breakdown,
+            StudentV4 student
+    ) {
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("퀴즈 ")
+                .append(breakdown.getQuiz())
+                .append("점");
+
+        sb.append(", 역할 ")
+                .append(breakdown.getRole())
+                .append("점");
+
+        sb.append(", 개인 ")
+                .append(breakdown.getPersonal())
+                .append("점");
+
+        sb.append(", 안전구역 ")
+                .append(breakdown.getSafezone())
+                .append("점");
+
+        sb.append(", 정답 퀴즈 ")
+                .append(breakdown.getCorrectQuizCount())
+                .append("개");
+
+        if (Boolean.TRUE.equals(student.getIsKicked())) {
+            sb.append(", 퇴출 패널티 -20점");
+        }
+
+        return sb.toString();
+    }
+
+    private String writeJsonSafely(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception e) {
+            return "{}";
+        }
     }
 
     public ScenarioEvaluationDetailResponse getEvaluations(String scenarioId) {
@@ -831,6 +892,8 @@ public class ScenarioService {
             scenarioSummary = ScenarioEvaluationDetailResponse.EvaluationSummary.builder()
                     .evaluationId(scenarioEval.getId())
                     .scoreTotal(scenarioEval.getScoreTotal())
+                    .scoreJson(scenarioEval.getScoreJson())
+                    .detailsJson(scenarioEval.getDetailsJson())
                     .feedbackText(scenarioEval.getFeedbackText())
                     .createdAt(scenarioEval.getCreatedAt())
                     .build();
@@ -842,6 +905,8 @@ public class ScenarioService {
                                 .evaluationId(eval.getId())
                                 .studentId(eval.getStudent() != null ? eval.getStudent().getId() : null)
                                 .scoreTotal(eval.getScoreTotal())
+                                .scoreJson(eval.getScoreJson())
+                                .detailsJson(eval.getDetailsJson())
                                 .feedbackText(eval.getFeedbackText())
                                 .createdAt(eval.getCreatedAt())
                                 .build())

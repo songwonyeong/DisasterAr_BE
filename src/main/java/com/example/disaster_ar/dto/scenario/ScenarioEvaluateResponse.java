@@ -27,6 +27,14 @@ public class ScenarioEvaluateResponse {
     public static class StudentEvaluationItem {
         private String studentId;
         private Double scoreTotal;
+
+        private Double quizScore;
+        private Double roleScore;
+        private Double personalScore;
+        private Double safezoneScore;
+
+        private Integer correctQuizCount;
+
         private String feedbackText;
     }
 }

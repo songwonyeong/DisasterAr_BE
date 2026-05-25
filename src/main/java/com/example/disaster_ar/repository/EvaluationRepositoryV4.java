@@ -18,4 +18,6 @@ public interface EvaluationRepositoryV4 extends JpaRepository<EvaluationV4, Stri
             String scenarioId,
             EvalLevel level
     );
+
+    void deleteByScenario_Id(String scenarioId);
 }
