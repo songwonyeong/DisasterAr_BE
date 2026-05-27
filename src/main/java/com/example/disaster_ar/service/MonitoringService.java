@@ -81,11 +81,6 @@ public class MonitoringService {
                     continue;
                 }
 
-                Integer floorIndex = asInteger(firstNonNull(
-                        floor.get("floorIndex"),
-                        floor.get("floor_index")
-                ));
-
                 String floorLabel = asString(firstNonNull(
                         floor.get("floorLabel"),
                         floor.get("floor_label"),
@@ -95,6 +90,8 @@ public class MonitoringService {
                 MonitoringImageResponse image = parseImage(floor);
 
                 List<Map<String, Object>> elements = parseElements(floor);
+
+                Integer floorIndex = resolveFloorIndex(floor, elements);
 
                 List<BeaconMarkerResponse> beaconMarkers = buildBeaconMarkers(
                         classroom,
@@ -119,6 +116,64 @@ public class MonitoringService {
         } catch (Exception e) {
             throw new IllegalArgumentException("구조도 JSON 파싱 실패", e);
         }
+    }
+
+    private Integer resolveFloorIndex(
+            Map<?, ?> floor,
+            List<Map<String, Object>> elements
+    ) {
+        Integer floorIndex = firstInteger(
+                floor.get("floorIndex"),
+                floor.get("floor_index"),
+                floor.get("floor"),
+                floor.get("index"),
+                floor.get("floorNo"),
+                floor.get("floorNumber")
+        );
+
+        if (floorIndex != null) {
+            return floorIndex;
+        }
+
+        /*
+         * 일부 구조도 JSON은 floor 객체가 아니라 element 안에 floor 값을 넣는다.
+         * 현재 배포 데이터가 이 케이스:
+         * floor.floorIndex = null
+         * element.floor = 0
+         */
+        if (elements != null) {
+            for (Map<String, Object> element : elements) {
+                floorIndex = firstInteger(
+                        element.get("floorIndex"),
+                        element.get("floor_index"),
+                        element.get("floor"),
+                        element.get("index"),
+                        element.get("floorNo"),
+                        element.get("floorNumber")
+                );
+
+                if (floorIndex != null) {
+                    return floorIndex;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private Integer firstInteger(Object... values) {
+        if (values == null) {
+            return null;
+        }
+
+        for (Object value : values) {
+            Integer parsed = asInteger(value);
+            if (parsed != null) {
+                return parsed;
+            }
+        }
+
+        return null;
     }
 
     private MonitoringImageResponse parseImage(Map<?, ?> floor) {
