@@ -8,8 +8,9 @@ import com.example.disaster_ar.domain.v4.SchoolMapTemplateV4;
 import com.example.disaster_ar.domain.v4.SchoolV4;
 import com.example.disaster_ar.domain.v4.StudentV4;
 import com.example.disaster_ar.domain.v4.UserV4;
-import com.example.disaster_ar.domain.v4.enums.TrainingState;
+import com.example.disaster_ar.domain.v4.enums.*;
 import com.example.disaster_ar.dto.room.*;
+import com.example.disaster_ar.dto.scenario.TeamDistributionRequest;
 import com.example.disaster_ar.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.example.disaster_ar.domain.v4.BeaconV4;
@@ -18,13 +19,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.example.disaster_ar.domain.v4.ScenarioAssignmentV4;
 import com.example.disaster_ar.domain.v4.ScenarioTriggerV4;
-import com.example.disaster_ar.domain.v4.enums.TriggerReason;
 import com.example.disaster_ar.domain.v4.ScenarioTeamV4;
 import com.example.disaster_ar.domain.v4.ScenarioTeamMemberV4;
-import com.example.disaster_ar.domain.v4.enums.ActorType;
+
 import java.time.LocalDateTime;
 import com.example.disaster_ar.domain.v4.ContentV4;
-import com.example.disaster_ar.domain.v4.enums.ContentType;
+
 import java.util.Random;
 import java.util.LinkedHashMap;
 import com.example.disaster_ar.domain.v4.ItemV4;
@@ -38,9 +38,6 @@ import java.util.List;
 import java.util.Optional;
 import jakarta.persistence.EntityManager;
 
-import com.example.disaster_ar.domain.v4.enums.AcquiredSource;
-import com.example.disaster_ar.domain.v4.enums.ScenarioActionType;
-import com.example.disaster_ar.domain.v4.enums.ProgressStatus;
 import java.util.*;
 
 @Service
@@ -71,6 +68,8 @@ public class RoomService {
     private final TeamMissionProgressRepositoryV4 teamMissionProgressRepositoryV4;
     private final BeaconAutoMappingService beaconAutoMappingService;
     private final EntityManager entityManager;
+    private final ScenarioTeamDistributionService scenarioTeamDistributionService;
+    private final ScenarioTeamAssignmentService scenarioTeamAssignmentService;
 
 
     public RoomResponse createRoom(RoomCreateRequest req) {
@@ -488,7 +487,7 @@ public class RoomService {
 
         scenarioAssignmentService.createDefaultFireAssignmentsIfEmpty(scenario.getId(), saved.getId());
 
-        assignTeamsIfEmpty(scenario.getId(), saved.getId());
+        prepareTeamsForTraining(scenario, saved.getId());
 
         linkFireTeamAssignments(scenario.getId());
 
@@ -2035,6 +2034,47 @@ public class RoomService {
         scenarioTeamMemberRepositoryV4.saveAll(members);
 
         System.out.println("🔥 팀 배정 완료: " + members.size() + "명");
+    }
+
+    private void prepareTeamsForTraining(ScenarioV4 scenario, String classroomId) {
+        List<StudentV4> activeStudents =
+                studentRepositoryV4.findByClassroom_IdAndIsKickedFalseOrderByJoinedAtAsc(classroomId);
+
+        if (activeStudents == null || activeStudents.isEmpty()) {
+            System.out.println("⚠ 활성 학생 없음 → 팀 배정 스킵");
+            return;
+        }
+
+        TeamMode teamMode = scenario.getTeamMode();
+
+        /*
+         * AUTO 모드에서는 기존 scenario_team_members가 있더라도
+         * 현재 활성 학생 기준으로 팀 정원 재계산 + 재배정을 강제한다.
+         *
+         * 이유:
+         * - 강퇴/재입장 학생 때문에 기존 team_members가 남아 있을 수 있음
+         * - 기존 배정이 있으면 assignTeamsIfEmpty()가 스킵되어
+         *   4명이 전부 시민팀처럼 보이는 문제가 생김
+         */
+        if (teamMode == null || teamMode == TeamMode.AUTO) {
+            scenarioTeamDistributionService.distributeTeams(
+                    scenario.getId(),
+                    TeamDistributionRequest.builder()
+                            .mode("AUTO")
+                            .build()
+            );
+
+            scenarioTeamAssignmentService.assignStudents(scenario.getId());
+            return;
+        }
+
+        /*
+         * MANUAL 모드는 기존 배정을 유지한다.
+         * 단, 아직 배정이 전혀 없으면 기존 fallback 로직으로 한 번 배정한다.
+         */
+        if (!scenarioTeamMemberRepositoryV4.existsByScenario_Id(scenario.getId())) {
+            assignTeamsIfEmpty(scenario.getId(), classroomId);
+        }
     }
 
     private ScenarioTeamV4 findOrCreateTeamWithMaxMembers(
