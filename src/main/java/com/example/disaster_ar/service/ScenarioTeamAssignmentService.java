@@ -64,7 +64,8 @@ public class ScenarioTeamAssignmentService {
             );
         }
 
-        scenarioTeamMemberRepositoryV4.deleteByScenario_Id(scenarioId);
+        scenarioTeamMemberRepositoryV4.deleteByScenarioIdForReassign(scenarioId);
+        scenarioTeamMemberRepositoryV4.flush();
 
         Collections.shuffle(students);
 

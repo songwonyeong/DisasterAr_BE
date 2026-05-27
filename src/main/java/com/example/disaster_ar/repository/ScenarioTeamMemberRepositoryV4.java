@@ -5,6 +5,9 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface ScenarioTeamMemberRepositoryV4 extends JpaRepository<ScenarioTeamMemberV4, String> {
 
@@ -29,4 +32,11 @@ public interface ScenarioTeamMemberRepositoryV4 extends JpaRepository<ScenarioTe
             String scenarioId,
             String teamId
     );
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(value = """
+    DELETE FROM scenario_team_members
+    WHERE scenario_id = :scenarioId
+""", nativeQuery = true)
+    void deleteByScenarioIdForReassign(@Param("scenarioId") String scenarioId);
 }
