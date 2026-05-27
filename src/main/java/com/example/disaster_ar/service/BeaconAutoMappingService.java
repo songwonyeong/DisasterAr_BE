@@ -91,9 +91,9 @@ public class BeaconAutoMappingService {
             Map<Integer, List<Map<String, Object>>> result = new LinkedHashMap<>();
 
             for (Map<String, Object> floor : floors) {
-                Integer floorIndex = toInteger(floor.get("floorIndex"));
-
                 List<Map<String, Object>> elements = extractElements(floor);
+
+                Integer floorIndex = resolveFloorIndex(floor, elements);
 
                 if (floorIndex != null && elements != null) {
                     result.put(floorIndex, elements);
@@ -104,6 +104,62 @@ public class BeaconAutoMappingService {
         } catch (Exception e) {
             throw new IllegalArgumentException("구조도 floorsJson 파싱 중 오류가 발생했습니다.", e);
         }
+    }
+
+    private Integer resolveFloorIndex(
+            Map<String, Object> floor,
+            List<Map<String, Object>> elements
+    ) {
+        Integer floorIndex = firstInteger(
+                floor.get("floorIndex"),
+                floor.get("floor_index"),
+                floor.get("floor"),
+                floor.get("index"),
+                floor.get("floorNo"),
+                floor.get("floorNumber")
+        );
+
+        if (floorIndex != null) {
+            return floorIndex;
+        }
+
+        /*
+         * 일부 구조도는 floor 객체가 아니라 element 안에 floor를 넣는다.
+         * 예: element.floor = 0
+         */
+        if (elements != null) {
+            for (Map<String, Object> element : elements) {
+                floorIndex = firstInteger(
+                        element.get("floorIndex"),
+                        element.get("floor_index"),
+                        element.get("floor"),
+                        element.get("index"),
+                        element.get("floorNo"),
+                        element.get("floorNumber")
+                );
+
+                if (floorIndex != null) {
+                    return floorIndex;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private Integer firstInteger(Object... values) {
+        if (values == null) {
+            return null;
+        }
+
+        for (Object value : values) {
+            Integer parsed = toInteger(value);
+            if (parsed != null) {
+                return parsed;
+            }
+        }
+
+        return null;
     }
 
     @SuppressWarnings("unchecked")
@@ -307,11 +363,12 @@ public class BeaconAutoMappingService {
     }
 
     private boolean isZoneType(String value) {
-        if (value == null) {
+        if (value == null || value.isBlank()) {
             return false;
         }
 
-        String upper = value.toUpperCase(Locale.ROOT);
+        String upper = value.trim().toUpperCase(Locale.ROOT);
+        String compact = compactText(value);
 
         return upper.contains("SAFE_ZONE")
                 || upper.contains("FIRE_ZONE")
@@ -321,33 +378,72 @@ public class BeaconAutoMappingService {
                 || upper.contains("SAFE")
                 || upper.contains("FIRE")
                 || upper.contains("DISASTER")
-                || upper.contains("RESTRICTED");
+                || upper.contains("RESTRICTED")
+                || upper.contains("RESTRICT")
+
+                /*
+                 * 한글 구역 타입
+                 */
+                || compact.contains("안전구역")
+                || compact.contains("대피구역")
+                || compact.contains("재난구역")
+                || compact.contains("화재구역")
+                || compact.contains("제한구역")
+                || compact.contains("출입제한");
     }
 
     private String normalizeZoneType(String value) {
-        if (value == null) {
+        if (value == null || value.isBlank()) {
             return null;
         }
 
         String upper = value.trim().toUpperCase(Locale.ROOT);
+        String compact = compactText(value);
 
-        if (upper.contains("SAFE")) {
+        /*
+         * 안전/대피
+         */
+        if (upper.contains("SAFE")
+                || upper.contains("EVACUATION")
+                || compact.contains("안전구역")
+                || compact.contains("대피구역")
+                || compact.contains("대피소")) {
             return "SAFE_ZONE";
         }
 
-        if (upper.contains("FIRE")) {
+        /*
+         * 현재 프로젝트에서는 재난 구역을 화재 구역으로 매핑한다.
+         */
+        if (upper.contains("FIRE")
+                || upper.contains("DISASTER")
+                || compact.contains("화재구역")
+                || compact.contains("재난구역")) {
             return "FIRE_ZONE";
         }
 
-        if (upper.contains("RESTRICTED") || upper.contains("RESTRICT")) {
+        /*
+         * 제한/출입 제한
+         */
+        if (upper.contains("RESTRICTED")
+                || upper.contains("RESTRICT")
+                || compact.contains("제한구역")
+                || compact.contains("출입제한")) {
             return "RESTRICTED_ZONE";
         }
 
-        if (upper.contains("DISASTER")) {
-            return "DISASTER_ZONE";
+        return upper;
+    }
+
+    private String compactText(String value) {
+        if (value == null) {
+            return "";
         }
 
-        return upper;
+        return value
+                .replaceAll("\\s+", "")
+                .replace("_", "")
+                .replace("-", "")
+                .trim();
     }
 
     private String getString(Map<String, Object> map, String key) {
