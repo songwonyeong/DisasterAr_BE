@@ -38,5 +38,5 @@ public interface ScenarioTeamMemberRepositoryV4 extends JpaRepository<ScenarioTe
     DELETE FROM scenario_team_members
     WHERE scenario_id = :scenarioId
 """, nativeQuery = true)
-    void deleteByScenarioIdForReassign(@Param("scenarioId") String scenarioId);
+    int deleteByScenarioIdForReassign(@Param("scenarioId") String scenarioId);
 }

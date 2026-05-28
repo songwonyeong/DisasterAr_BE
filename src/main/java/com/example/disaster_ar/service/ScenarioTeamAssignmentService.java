@@ -64,8 +64,11 @@ public class ScenarioTeamAssignmentService {
             );
         }
 
-        scenarioTeamMemberRepositoryV4.deleteByScenarioIdForReassign(scenarioId);
+        int deleted = scenarioTeamMemberRepositoryV4.deleteByScenarioIdForReassign(scenarioId);
+
         scenarioTeamMemberRepositoryV4.flush();
+
+        System.out.println("🔥 기존 팀 배정 삭제 완료 scenarioId=" + scenarioId + ", deleted=" + deleted);
 
         Collections.shuffle(students);
 
