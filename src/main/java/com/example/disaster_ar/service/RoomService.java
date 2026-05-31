@@ -657,7 +657,8 @@ public class RoomService {
          * 활성 구조도 기준으로 비콘이 어느 zone 안에 있는지 자동 판정하고
          * beacon_element_maps를 자동 갱신한다.
          */
-        beaconAutoMappingService.syncForActiveMap(saved);
+        BeaconAutoMappingService.SyncResult syncResult =
+                beaconAutoMappingService.syncForActiveMap(saved);
 
         return ActiveMapResponse.builder()
                 .classroomId(saved.getId())
@@ -671,6 +672,12 @@ public class RoomService {
                                 ? saved.getActiveMapVersion().getLabel()
                                 : null
                 )
+                .syncFloorsProcessed(syncResult.floorsProcessed())
+                .syncBeaconsProcessed(syncResult.beaconsProcessed())
+                .syncMappingsCreated(syncResult.mappingsCreated())
+                .syncMappingsUpdated(syncResult.mappingsUpdated())
+                .syncMappingsDeactivated(syncResult.mappingsDeactivated())
+                .syncUnmatchedBeacons(syncResult.unmatchedBeacons())
                 .build();
     }
 
@@ -2449,7 +2456,8 @@ public class RoomService {
             throw new IllegalArgumentException("활성 구조도가 존재하지 않습니다.");
         }
 
-        beaconAutoMappingService.syncForActiveMap(classroom);
+        BeaconAutoMappingService.SyncResult syncResult =
+                beaconAutoMappingService.syncForActiveMap(classroom);
 
         return ActiveMapResponse.builder()
                 .classroomId(classroom.getId())
@@ -2463,6 +2471,12 @@ public class RoomService {
                                 ? classroom.getActiveMapVersion().getLabel()
                                 : null
                 )
+                .syncFloorsProcessed(syncResult.floorsProcessed())
+                .syncBeaconsProcessed(syncResult.beaconsProcessed())
+                .syncMappingsCreated(syncResult.mappingsCreated())
+                .syncMappingsUpdated(syncResult.mappingsUpdated())
+                .syncMappingsDeactivated(syncResult.mappingsDeactivated())
+                .syncUnmatchedBeacons(syncResult.unmatchedBeacons())
                 .build();
     }
 

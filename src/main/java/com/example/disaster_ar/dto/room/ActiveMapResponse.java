@@ -15,4 +15,11 @@ public class ActiveMapResponse {
     private String classroomId;
     private String activeMapVersionId;
     private String label;
+
+    private Integer syncFloorsProcessed;
+    private Integer syncBeaconsProcessed;
+    private Integer syncMappingsCreated;
+    private Integer syncMappingsUpdated;
+    private Integer syncMappingsDeactivated;
+    private Integer syncUnmatchedBeacons;
 }

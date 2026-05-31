@@ -25,16 +25,29 @@ public class BeaconAutoMappingService {
     private final BeaconRepositoryV4 beaconRepositoryV4;
     private final BeaconElementMapRepositoryV4 beaconElementMapRepositoryV4;
 
+    public record SyncResult(
+            int floorsProcessed,
+            int beaconsProcessed,
+            int mappingsCreated,
+            int mappingsUpdated,
+            int mappingsDeactivated,
+            int unmatchedBeacons
+    ) {
+        public static SyncResult empty() {
+            return new SyncResult(0, 0, 0, 0, 0, 0);
+        }
+    }
+
     @Transactional
-    public void syncForActiveMap(ClassroomV4 classroom) {
+    public SyncResult syncForActiveMap(ClassroomV4 classroom) {
         if (classroom == null || classroom.getSchool() == null || classroom.getActiveMapVersion() == null) {
-            return;
+            return SyncResult.empty();
         }
 
         RoomMapVersionV4 mapVersion = classroom.getActiveMapVersion();
 
         if (mapVersion.getFloorsJson() == null || mapVersion.getFloorsJson().isBlank()) {
-            return;
+            return SyncResult.empty();
         }
 
         String schoolId = classroom.getSchool().getId();
@@ -43,22 +56,30 @@ public class BeaconAutoMappingService {
                 parseElementsByFloor(mapVersion.getFloorsJson());
 
         if (elementsByFloor.isEmpty()) {
-            return;
+            return SyncResult.empty();
         }
+
+        int floorsProcessed = 0;
+        int beaconsProcessed = 0;
+        int mappingsCreated = 0;
+        int mappingsUpdated = 0;
+        int mappingsDeactivated = 0;
+        int unmatchedBeacons = 0;
 
         for (Map.Entry<Integer, List<Map<String, Object>>> entry : elementsByFloor.entrySet()) {
             Integer floorIndex = entry.getKey();
-            List<Map<String, Object>> elements = entry.getValue();
 
-            if (floorIndex == null || elements == null || elements.isEmpty()) {
+            if (floorIndex == null) {
                 continue;
             }
+
+            List<Map<String, Object>> elements =
+                    entry.getValue() != null ? entry.getValue() : List.of();
+
+            floorsProcessed++;
 
             List<ZoneElement> zones = extractZoneElements(elements);
-
-            if (zones.isEmpty()) {
-                continue;
-            }
+            Set<String> currentZoneElementIds = toZoneIdSet(zones);
 
             List<BeaconV4> beacons =
                     beaconRepositoryV4.findBySchool_IdAndFloorIndexOrderByBeaconNoAsc(
@@ -66,20 +87,67 @@ public class BeaconAutoMappingService {
                             floorIndex
                     );
 
+            Set<String> matchedBeaconIds = new HashSet<>();
+
             for (BeaconV4 beacon : beacons) {
+                beaconsProcessed++;
+
                 if (beacon.getX() == null || beacon.getY() == null) {
+                    unmatchedBeacons++;
                     continue;
                 }
 
                 ZoneElement matchedZone = findContainingZone(beacon, zones);
 
                 if (matchedZone == null) {
+                    unmatchedBeacons++;
                     continue;
                 }
 
-                upsertMapping(classroom, floorIndex, beacon, matchedZone);
+                String beaconElementId = findBeaconElementId(beacon, elements);
+
+                boolean created = upsertMapping(
+                        classroom,
+                        floorIndex,
+                        beacon,
+                        matchedZone,
+                        beaconElementId
+                );
+
+                if (created) {
+                    mappingsCreated++;
+                } else {
+                    mappingsUpdated++;
+                }
+
+                matchedBeaconIds.add(beacon.getId());
             }
+
+            /*
+             * 핵심 수정:
+             * 현재 활성 구조도에 더 이상 존재하지 않는 zoneElementId 매핑은 inactive 처리한다.
+             *
+             * 주의:
+             * 여기서는 "매칭 실패한 모든 매핑"을 끄지 않는다.
+             * 프로젝트에 수동 매핑 API가 있으므로, 수동으로 현재 구조도 zone에 연결한 매핑까지
+             * sync 때 꺼버리면 안 된다.
+             */
+            mappingsDeactivated += deactivateMappingsMissingFromCurrentMap(
+                    schoolId,
+                    floorIndex,
+                    currentZoneElementIds,
+                    matchedBeaconIds
+            );
         }
+
+        return new SyncResult(
+                floorsProcessed,
+                beaconsProcessed,
+                mappingsCreated,
+                mappingsUpdated,
+                mappingsDeactivated,
+                unmatchedBeacons
+        );
     }
 
     private Map<Integer, List<Map<String, Object>>> parseElementsByFloor(String floorsJson) {
@@ -95,8 +163,11 @@ public class BeaconAutoMappingService {
 
                 Integer floorIndex = resolveFloorIndex(floor, elements);
 
-                if (floorIndex != null && elements != null) {
-                    result.put(floorIndex, elements);
+                if (floorIndex != null) {
+                    result.put(
+                            floorIndex,
+                            elements != null ? elements : List.of()
+                    );
                 }
             }
 
@@ -162,47 +233,85 @@ public class BeaconAutoMappingService {
         return null;
     }
 
-    @SuppressWarnings("unchecked")
     private List<Map<String, Object>> extractFloors(Object root) {
         if (root instanceof List<?> list) {
-            return (List<Map<String, Object>>) (List<?>) list;
+            return toMapList(list);
         }
 
         if (root instanceof Map<?, ?> map) {
             Object floors = map.get("floors");
-            if (floors instanceof List<?> list) {
-                return (List<Map<String, Object>>) (List<?>) list;
-            }
+            return toMapList(floors);
         }
 
         return List.of();
     }
 
-    @SuppressWarnings("unchecked")
     private List<Map<String, Object>> extractElements(Map<String, Object> floor) {
-        Object elements = floor.get("elements");
+        Object elements = firstNonNull(
+                floor.get("elements"),
+                floor.get("elementsJson"),
+                floor.get("elements_json")
+        );
 
-        if (elements instanceof List<?> list) {
-            return (List<Map<String, Object>>) (List<?>) list;
+        if (elements instanceof String text) {
+            try {
+                elements = objectMapper.readValue(text, Object.class);
+            } catch (Exception e) {
+                return List.of();
+            }
         }
 
-        /*
-         * 기존 createMapVersionFromChannelSet() 쪽에서는 elementsJson이라는 이름으로 들어갈 수 있음.
-         */
-        Object elementsJson = floor.get("elementsJson");
+        return toMapList(elements);
+    }
 
-        if (elementsJson instanceof List<?> list) {
-            return (List<Map<String, Object>>) (List<?>) list;
+    private List<Map<String, Object>> toMapList(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
         }
 
-        return List.of();
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        for (Object item : list) {
+            if (!(item instanceof Map<?, ?> map)) {
+                continue;
+            }
+
+            Map<String, Object> converted = new LinkedHashMap<>();
+
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                converted.put(String.valueOf(entry.getKey()), entry.getValue());
+            }
+
+            result.add(converted);
+        }
+
+        return result;
+    }
+
+    private Object firstNonNull(Object... values) {
+        if (values == null) {
+            return null;
+        }
+
+        for (Object value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+
+        return null;
     }
 
     private List<ZoneElement> extractZoneElements(List<Map<String, Object>> elements) {
         List<ZoneElement> zones = new ArrayList<>();
 
         for (Map<String, Object> element : elements) {
-            String id = getString(element, "id");
+            String id = firstText(
+                    getString(element, "id"),
+                    getString(element, "elementId"),
+                    getString(element, "element_id")
+            );
+
             String name = firstText(
                     getString(element, "placementName"),
                     getString(element, "name"),
@@ -213,23 +322,16 @@ public class BeaconAutoMappingService {
 
             String zoneType = firstText(
                     getString(element, "zoneType"),
+                    getString(element, "zone_type"),
                     getString(element, "elementType"),
                     getString(element, "element_type"),
                     getString(element, "type")
             );
 
-            if (id == null || zoneType == null) {
-                continue;
-            }
-
-            if (!isZoneType(zoneType)) {
-                continue;
-            }
-
             Double x = toDouble(element.get("x"));
             Double y = toDouble(element.get("y"));
-            Double width = toDouble(element.get("width"));
-            Double height = toDouble(element.get("height"));
+            Double width = firstDouble(element.get("width"), element.get("w"));
+            Double height = firstDouble(element.get("height"), element.get("h"));
 
             /*
              * 1차 2차 첫 버전은 rect만 자동 판정.
@@ -251,6 +353,168 @@ public class BeaconAutoMappingService {
         }
 
         return zones;
+    }
+
+    private Double firstDouble(Object... values) {
+        if (values == null) {
+            return null;
+        }
+
+        for (Object value : values) {
+            Double parsed = toDouble(value);
+            if (parsed != null) {
+                return parsed;
+            }
+        }
+
+        return null;
+    }
+
+    private Set<String> toZoneIdSet(List<ZoneElement> zones) {
+        Set<String> result = new HashSet<>();
+
+        if (zones == null) {
+            return result;
+        }
+
+        for (ZoneElement zone : zones) {
+            if (zone.id() != null && !zone.id().isBlank()) {
+                result.add(zone.id().trim());
+            }
+        }
+
+        return result;
+    }
+
+    private int deactivateMappingsMissingFromCurrentMap(
+            String schoolId,
+            Integer floorIndex,
+            Set<String> currentZoneElementIds,
+            Set<String> matchedBeaconIds
+    ) {
+        List<BeaconElementMapV4> activeMappings =
+                beaconElementMapRepositoryV4.findBySchool_IdAndFloorIndexAndActiveTrue(
+                        schoolId,
+                        floorIndex
+                );
+
+        int deactivated = 0;
+        LocalDateTime now = LocalDateTime.now();
+
+        for (BeaconElementMapV4 mapping : activeMappings) {
+            String beaconId = mapping.getBeacon() != null
+                    ? mapping.getBeacon().getId()
+                    : null;
+
+            /*
+             * 이번 sync에서 정상 매칭된 비콘은 유지한다.
+             */
+            if (beaconId != null && matchedBeaconIds.contains(beaconId)) {
+                continue;
+            }
+
+            String zoneElementId = trimToNull(mapping.getEffectiveZoneElementId());
+
+            /*
+             * 핵심:
+             * 현재 활성 구조도에 없는 zoneElementId면 stale mapping으로 본다.
+             *
+             * 현재 케이스:
+             * auto-room-14는 새 구조도에 없음
+             * → inactive 처리됨
+             */
+            if (zoneElementId == null || !currentZoneElementIds.contains(zoneElementId)) {
+                mapping.setActive(false);
+                mapping.setUpdatedAt(now);
+                beaconElementMapRepositoryV4.save(mapping);
+                deactivated++;
+            }
+        }
+
+        return deactivated;
+    }
+
+    private String findBeaconElementId(
+            BeaconV4 beacon,
+            List<Map<String, Object>> elements
+    ) {
+        if (beacon == null || elements == null) {
+            return null;
+        }
+
+        for (Map<String, Object> element : elements) {
+            String elementId = firstText(
+                    getString(element, "id"),
+                    getString(element, "elementId"),
+                    getString(element, "element_id")
+            );
+
+            if (elementId == null) {
+                continue;
+            }
+
+            /*
+             * 현재 데이터에 있는 값:
+             * serverBeaconId = 993e1cc7-99a2-46a0-aa9a-3eb431b81228
+             */
+            String serverBeaconId = firstText(
+                    getString(element, "serverBeaconId"),
+                    getString(element, "server_beacon_id"),
+                    getString(element, "beaconId"),
+                    getString(element, "beacon_id")
+            );
+
+            if (serverBeaconId != null && serverBeaconId.equals(beacon.getId())) {
+                return elementId;
+            }
+
+            Integer beaconNo = firstInteger(
+                    element.get("beaconNo"),
+                    element.get("beacon_no")
+            );
+
+            if (beaconNo != null
+                    && beacon.getBeaconNo() != null
+                    && Objects.equals(beaconNo, beacon.getBeaconNo())) {
+                return elementId;
+            }
+
+            String uuid = firstText(
+                    getString(element, "beaconUuid"),
+                    getString(element, "beacon_uuid"),
+                    getString(element, "uuid")
+            );
+
+            Integer major = firstInteger(
+                    element.get("beaconMajor"),
+                    element.get("beacon_major"),
+                    element.get("major")
+            );
+
+            Integer minor = firstInteger(
+                    element.get("beaconMinor"),
+                    element.get("beacon_minor"),
+                    element.get("minor")
+            );
+
+            if (uuid != null
+                    && beacon.getUuid() != null
+                    && uuid.equalsIgnoreCase(beacon.getUuid())
+                    && Objects.equals(major, beacon.getMajor())
+                    && Objects.equals(minor, beacon.getMinor())) {
+                return elementId;
+            }
+        }
+
+        return null;
+    }
+
+    private String trimToNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+
+        return value.trim();
     }
 
     private ZoneElement findContainingZone(BeaconV4 beacon, List<ZoneElement> zones) {
@@ -308,21 +572,25 @@ public class BeaconAutoMappingService {
         return 999;
     }
 
-    private void upsertMapping(
+    private boolean upsertMapping(
             ClassroomV4 classroom,
             Integer floorIndex,
             BeaconV4 beacon,
-            ZoneElement zone
+            ZoneElement zone,
+            String beaconElementId
     ) {
-        BeaconElementMapV4 mapping = beaconElementMapRepositoryV4
-                .findByBeacon_Id(beacon.getId())
-                .orElseGet(() -> BeaconElementMapV4.builder()
-                        .id(UUID.randomUUID().toString())
-                        .createdAt(LocalDateTime.now())
-                        .thresholdRssi(DEFAULT_THRESHOLD_RSSI)
-                        .active(true)
-                        .build()
-                );
+        Optional<BeaconElementMapV4> existing =
+                beaconElementMapRepositoryV4.findByBeacon_Id(beacon.getId());
+
+        boolean created = existing.isEmpty();
+
+        BeaconElementMapV4 mapping = existing.orElseGet(() -> BeaconElementMapV4.builder()
+                .id(UUID.randomUUID().toString())
+                .createdAt(LocalDateTime.now())
+                .thresholdRssi(DEFAULT_THRESHOLD_RSSI)
+                .active(true)
+                .build()
+        );
 
         LocalDateTime now = LocalDateTime.now();
 
@@ -341,10 +609,11 @@ public class BeaconAutoMappingService {
         mapping.setZoneElementId(zone.id());
 
         /*
-         * 아직 구조도에 별도 beacon marker element를 판별하지 않았으므로 null.
-         * 나중에 비콘 마커 element가 생기면 여기에 넣는다.
+         * 구조도 JSON 안에 비콘 마커 element가 있으면 저장한다.
+         * 현재 데이터 기준:
+         * beaconElementId = beacon-1779967677882-cvvy
          */
-        mapping.setBeaconElementId(null);
+        mapping.setBeaconElementId(beaconElementId);
 
         mapping.setPlacementName(zone.name());
         mapping.setZoneType(zone.zoneType());
@@ -353,13 +622,18 @@ public class BeaconAutoMappingService {
             mapping.setThresholdRssi(DEFAULT_THRESHOLD_RSSI);
         }
 
-        if (mapping.getActive() == null) {
-            mapping.setActive(true);
-        }
+        /*
+         * 중요:
+         * 기존 코드는 active가 null일 때만 true로 만들었다.
+         * 그러면 과거에 inactive 처리된 row가 다시 매칭돼도 살아나지 않을 수 있다.
+         */
+        mapping.setActive(true);
 
         mapping.setUpdatedAt(now);
 
         beaconElementMapRepositoryV4.save(mapping);
+
+        return created;
     }
 
     private boolean isZoneType(String value) {

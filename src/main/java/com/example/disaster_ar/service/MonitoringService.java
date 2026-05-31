@@ -292,10 +292,38 @@ public class MonitoringService {
              * beaconElementId는 비콘 마커 위치 기준.
              */
             String zoneElementId = trimToNull(mapping.getEffectiveZoneElementId());
+
+            if (zoneElementId == null) {
+                continue;
+            }
+
             String beaconElementId = trimToNull(mapping.getBeaconElementId());
 
             Map<String, Object> zoneElement = findElementById(elements, zoneElementId);
+
+            /*
+             * 핵심 방어:
+             * DB에 active mapping이 남아 있어도,
+             * 현재 활성 구조도에 없는 zoneElementId면 monitoring-map에 내려주지 않는다.
+             *
+             * 현재 케이스:
+             * zoneElementId = auto-room-14
+             * 현재 활성 구조도에는 auto-room-14 없음
+             * → skip
+             */
+            if (zoneElement == null) {
+                continue;
+            }
+
             Map<String, Object> beaconElement = findElementById(elements, beaconElementId);
+
+            /*
+             * beaconElementId도 예전 구조도 값이면 위치 element를 못 찾는다.
+             * 이 경우 zoneElement 또는 beacon 테이블 좌표 fallback을 쓰도록 null 처리.
+             */
+            if (beaconElementId != null && beaconElement == null) {
+                beaconElementId = null;
+            }
 
             /*
              * 좌표는 beaconElementId가 있으면 비콘 마커 element 기준.
@@ -412,24 +440,46 @@ public class MonitoringService {
             Map<String, Object> zoneElement,
             BeaconV4 beacon
     ) {
-        String placementName = trimToNull(mapping.getPlacementName());
-        if (placementName != null) {
-            return placementName;
+        /*
+         * 현재 활성 구조도 JSON 값을 우선한다.
+         * DB snapshot은 과거 구조도 값일 수 있기 때문이다.
+         */
+        if (zoneElement != null) {
+            String currentName = trimToNull(asString(firstNonNull(
+                    zoneElement.get("placementName"),
+                    zoneElement.get("name"),
+                    zoneElement.get("label"),
+                    zoneElement.get("elementName"),
+                    zoneElement.get("element_name")
+            )));
+
+            if (currentName != null) {
+                return currentName;
+            }
         }
 
-        return resolvePlacementName(zoneElement, beacon);
+        String snapshotName = trimToNull(mapping.getPlacementName());
+        if (snapshotName != null) {
+            return snapshotName;
+        }
+
+        return beacon.getName();
     }
 
     private String resolveZoneType(
             BeaconElementMapV4 mapping,
             Map<String, Object> zoneElement
     ) {
-        String zoneType = trimToNull(mapping.getZoneType());
-        if (zoneType != null) {
-            return zoneType;
+        /*
+         * 현재 활성 구조도 JSON 값을 우선한다.
+         */
+        String currentZoneType = trimToNull(resolveZoneType(zoneElement));
+
+        if (currentZoneType != null) {
+            return currentZoneType;
         }
 
-        return resolveZoneType(zoneElement);
+        return trimToNull(mapping.getZoneType());
     }
 
     private String trimToNull(String value) {
