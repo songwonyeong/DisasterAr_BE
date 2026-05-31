@@ -26,14 +26,31 @@ public class ScenarioEvaluateResponse {
     @AllArgsConstructor
     public static class StudentEvaluationItem {
         private String studentId;
+        private String studentName;
+        private Boolean isKicked;
+
+        private String teamId;
+        private String teamCode;
+        private String teamName;
+
         private Double scoreTotal;
 
         private Double quizScore;
         private Double roleScore;
         private Double personalScore;
         private Double safezoneScore;
+        private Double kickedPenalty;
 
         private Integer correctQuizCount;
+
+        private Boolean randomQuizCompleted;
+        private Boolean reportCallCompleted;
+        private Boolean extinguisherFound;
+        private Boolean safeZoneCompleted;
+
+        private Boolean fireteamExtinguisherAcquired;
+        private Boolean fireteamExtinguisherQuizCompleted;
+        private Boolean fireteamDonutCompleted;
 
         private String feedbackText;
     }

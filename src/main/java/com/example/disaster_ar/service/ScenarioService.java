@@ -4,6 +4,7 @@ import com.example.disaster_ar.domain.v4.*;
 import com.example.disaster_ar.domain.v4.enums.*;
 import com.example.disaster_ar.dto.scenario.*;
 import com.example.disaster_ar.repository.*;
+import com.fasterxml.jackson.core.type.TypeReference;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -723,6 +724,19 @@ public class ScenarioService {
                 scenario.getClassroom().getId()
         );
 
+        Map<String, ScenarioTeamMemberV4> teamMemberByStudentId = new HashMap<>();
+
+        for (ScenarioTeamMemberV4 member : scenarioTeamMemberRepositoryV4.findByScenario_IdOrderByAssignedAtAsc(scenarioId)) {
+            if (member.getStudent() == null) {
+                continue;
+            }
+
+            teamMemberByStudentId.putIfAbsent(
+                    member.getStudent().getId(),
+                    member
+            );
+        }
+
         List<ScenarioEvaluateResponse.StudentEvaluationItem> studentResults = new ArrayList<>();
 
         double totalScore = 0.0;
@@ -777,15 +791,39 @@ public class ScenarioService {
 
             evaluationRepositoryV4.save(studentEval);
 
+            ScenarioTeamMemberV4 teamMember = teamMemberByStudentId.get(student.getId());
+            ScenarioTeamV4 team = teamMember != null ? teamMember.getTeam() : null;
+
+            double kickedPenalty = Boolean.TRUE.equals(student.getIsKicked()) ? -20.0 : 0.0;
+
             studentResults.add(
                     ScenarioEvaluateResponse.StudentEvaluationItem.builder()
                             .studentId(student.getId())
+                            .studentName(student.getStudentName())
+                            .isKicked(Boolean.TRUE.equals(student.getIsKicked()))
+
+                            .teamId(team != null ? team.getId() : null)
+                            .teamCode(team != null ? team.getTeamCode() : null)
+                            .teamName(team != null ? team.getTeamName() : null)
+
                             .scoreTotal(score)
                             .quizScore(breakdown.getQuiz())
                             .roleScore(breakdown.getRole())
                             .personalScore(breakdown.getPersonal())
                             .safezoneScore(breakdown.getSafezone())
+                            .kickedPenalty(kickedPenalty)
+
                             .correctQuizCount(breakdown.getCorrectQuizCount())
+
+                            .randomQuizCompleted(breakdown.getRandomQuizCompleted())
+                            .reportCallCompleted(breakdown.getReportCallCompleted())
+                            .extinguisherFound(breakdown.getExtinguisherFound())
+                            .safeZoneCompleted(breakdown.getSafeZoneCompleted())
+
+                            .fireteamExtinguisherAcquired(breakdown.getFireteamExtinguisherAcquired())
+                            .fireteamExtinguisherQuizCompleted(breakdown.getFireteamExtinguisherQuizCompleted())
+                            .fireteamDonutCompleted(breakdown.getFireteamDonutCompleted())
+
                             .feedbackText(feedback)
                             .build()
             );
@@ -870,6 +908,7 @@ public class ScenarioService {
         }
     }
 
+    @Transactional(readOnly = true)
     public ScenarioEvaluationDetailResponse getEvaluations(String scenarioId) {
         ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
                 .orElseThrow(() -> new IllegalArgumentException("시나리오 없음"));
@@ -887,6 +926,24 @@ public class ScenarioService {
                         EvalLevel.STUDENT
                 );
 
+        /*
+         * 추가해야 하는 부분:
+         * GET /evaluations 응답에서도 학생별 팀 정보를 넣기 위해
+         * studentId -> ScenarioTeamMemberV4 맵을 만든다.
+         */
+        Map<String, ScenarioTeamMemberV4> teamMemberByStudentId = new HashMap<>();
+
+        for (ScenarioTeamMemberV4 member : scenarioTeamMemberRepositoryV4.findByScenario_IdOrderByAssignedAtAsc(scenarioId)) {
+            if (member.getStudent() == null) {
+                continue;
+            }
+
+            teamMemberByStudentId.putIfAbsent(
+                    member.getStudent().getId(),
+                    member
+            );
+        }
+
         ScenarioEvaluationDetailResponse.EvaluationSummary scenarioSummary = null;
         if (scenarioEval != null) {
             scenarioSummary = ScenarioEvaluationDetailResponse.EvaluationSummary.builder()
@@ -901,15 +958,58 @@ public class ScenarioService {
 
         List<ScenarioEvaluationDetailResponse.StudentEvaluationSummary> studentSummaries =
                 studentEvals.stream()
-                        .map(eval -> ScenarioEvaluationDetailResponse.StudentEvaluationSummary.builder()
-                                .evaluationId(eval.getId())
-                                .studentId(eval.getStudent() != null ? eval.getStudent().getId() : null)
-                                .scoreTotal(eval.getScoreTotal())
-                                .scoreJson(eval.getScoreJson())
-                                .detailsJson(eval.getDetailsJson())
-                                .feedbackText(eval.getFeedbackText())
-                                .createdAt(eval.getCreatedAt())
-                                .build())
+                        .map(eval -> {
+                            StudentV4 student = eval.getStudent();
+                            String studentId = student != null ? student.getId() : null;
+
+                            ScenarioTeamMemberV4 teamMember =
+                                    studentId != null ? teamMemberByStudentId.get(studentId) : null;
+
+                            ScenarioTeamV4 team =
+                                    teamMember != null ? teamMember.getTeam() : null;
+
+                            Map<String, Object> scoreMap = readJsonMapSafely(eval.getScoreJson());
+                            Map<String, Object> detailsMap = readJsonMapSafely(eval.getDetailsJson());
+
+                            return ScenarioEvaluationDetailResponse.StudentEvaluationSummary.builder()
+                                    .evaluationId(eval.getId())
+
+                                    .studentId(studentId)
+                                    .studentName(student != null ? student.getStudentName() : null)
+                                    .isKicked(student != null && Boolean.TRUE.equals(student.getIsKicked()))
+
+                                    .teamId(team != null ? team.getId() : null)
+                                    .teamCode(team != null ? team.getTeamCode() : null)
+                                    .teamName(team != null ? team.getTeamName() : null)
+
+                                    .scoreTotal(eval.getScoreTotal())
+                                    .quizScore(toDouble(scoreMap.get("quiz")))
+                                    .roleScore(toDouble(scoreMap.get("role")))
+                                    .personalScore(toDouble(scoreMap.get("personal")))
+                                    .safezoneScore(toDouble(scoreMap.get("safezone")))
+                                    .kickedPenalty(
+                                            student != null && Boolean.TRUE.equals(student.getIsKicked())
+                                                    ? -20.0
+                                                    : 0.0
+                                    )
+
+                                    .correctQuizCount(toInteger(detailsMap.get("correctQuizCount")))
+
+                                    .randomQuizCompleted(toBoolean(detailsMap.get("randomQuizCompleted")))
+                                    .reportCallCompleted(toBoolean(detailsMap.get("reportCallCompleted")))
+                                    .extinguisherFound(toBoolean(detailsMap.get("extinguisherFound")))
+                                    .safeZoneCompleted(toBoolean(detailsMap.get("safeZoneCompleted")))
+
+                                    .fireteamExtinguisherAcquired(toBoolean(detailsMap.get("fireteamExtinguisherAcquired")))
+                                    .fireteamExtinguisherQuizCompleted(toBoolean(detailsMap.get("fireteamExtinguisherQuizCompleted")))
+                                    .fireteamDonutCompleted(toBoolean(detailsMap.get("fireteamDonutCompleted")))
+
+                                    .scoreJson(eval.getScoreJson())
+                                    .detailsJson(eval.getDetailsJson())
+                                    .feedbackText(eval.getFeedbackText())
+                                    .createdAt(eval.getCreatedAt())
+                                    .build();
+                        })
                         .toList();
 
         return ScenarioEvaluationDetailResponse.builder()
@@ -917,6 +1017,65 @@ public class ScenarioService {
                 .scenarioEvaluation(scenarioSummary)
                 .studentEvaluations(studentSummaries)
                 .build();
+    }
+
+    private Map<String, Object> readJsonMapSafely(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+
+        try {
+            return objectMapper.readValue(
+                    json,
+                    new TypeReference<Map<String, Object>>() {}
+            );
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
+    private Double toDouble(Object value) {
+        if (value == null) {
+            return null;
+        }
+
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+
+        try {
+            return Double.parseDouble(String.valueOf(value));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Integer toInteger(Object value) {
+        if (value == null) {
+            return null;
+        }
+
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Boolean toBoolean(Object value) {
+        if (value == null) {
+            return null;
+        }
+
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+
+        return Boolean.parseBoolean(String.valueOf(value));
     }
 
     public void completeTeamStep(
