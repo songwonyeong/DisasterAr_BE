@@ -303,15 +303,14 @@ public class MonitoringService {
 
             /*
              * 핵심 방어:
-             * DB에 active mapping이 남아 있어도,
-             * 현재 활성 구조도에 없는 zoneElementId면 monitoring-map에 내려주지 않는다.
+             * 1. 현재 활성 구조도에 없는 zoneElementId는 내려주지 않는다.
+             * 2. 현재 구조도에 존재하더라도 BEACON/비콘/방/건물윤곽이면 zone이 아니므로 내려주지 않는다.
              *
-             * 현재 케이스:
-             * zoneElementId = auto-room-14
-             * 현재 활성 구조도에는 auto-room-14 없음
-             * → skip
+             * 현재 문제 케이스:
+             * zoneElementId = beacon-1779967677882-cvvy
+             * 해당 element는 현재 구조도에 존재하지만 elementType = BEACON이므로 skip해야 한다.
              */
-            if (zoneElement == null) {
+            if (zoneElement == null || !isMonitoringZoneElement(zoneElement)) {
                 continue;
             }
 
@@ -494,12 +493,134 @@ public class MonitoringService {
             return null;
         }
 
-        return asString(firstNonNull(
+        String explicitZoneType = asString(firstNonNull(
                 element.get("zoneType"),
+                element.get("zone_type")
+        ));
+
+        if (isMonitoringZoneType(explicitZoneType)) {
+            return normalizeMonitoringZoneType(explicitZoneType);
+        }
+
+        String fallbackType = asString(firstNonNull(
                 element.get("elementType"),
                 element.get("element_type"),
                 element.get("type")
         ));
+
+        if (isMonitoringZoneType(fallbackType)) {
+            return normalizeMonitoringZoneType(fallbackType);
+        }
+
+        return null;
+    }
+
+    private boolean isMonitoringZoneElement(Map<String, Object> element) {
+        if (element == null) {
+            return false;
+        }
+
+        String explicitZoneType = asString(firstNonNull(
+                element.get("zoneType"),
+                element.get("zone_type")
+        ));
+
+        if (isMonitoringZoneType(explicitZoneType)) {
+            return true;
+        }
+
+        String fallbackType = asString(firstNonNull(
+                element.get("elementType"),
+                element.get("element_type"),
+                element.get("type")
+        ));
+
+        return isMonitoringZoneType(fallbackType);
+    }
+
+    private boolean isMonitoringZoneType(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+
+        String upper = value.trim().toUpperCase(Locale.ROOT);
+        String compact = compactText(value);
+        String compactUpper = compact.toUpperCase(Locale.ROOT);
+
+        if (upper.equals("BEACON")
+                || compact.equals("비콘")
+                || compact.equals("방")
+                || compact.equals("건물윤곽")
+                || compactUpper.equals("ROOM")
+                || compactUpper.equals("WALL")
+                || compactUpper.equals("OUTLINE")) {
+            return false;
+        }
+
+        return upper.equals("SAFE_ZONE")
+                || upper.equals("FIRE_ZONE")
+                || upper.equals("DISASTER_ZONE")
+                || upper.equals("RESTRICTED_ZONE")
+                || upper.equals("EVACUATION_ZONE")
+                || upper.equals("SAFE")
+                || upper.equals("FIRE")
+                || upper.equals("DISASTER")
+                || upper.equals("RESTRICTED")
+                || upper.equals("EVACUATION")
+                || compact.equals("안전구역")
+                || compact.equals("대피구역")
+                || compact.equals("재난구역")
+                || compact.equals("화재구역")
+                || compact.equals("제한구역")
+                || compact.equals("출입제한구역");
+    }
+
+    private String normalizeMonitoringZoneType(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+
+        String upper = value.trim().toUpperCase(Locale.ROOT);
+        String compact = compactText(value);
+
+        if (upper.equals("SAFE_ZONE")
+                || upper.equals("SAFE")
+                || upper.equals("EVACUATION_ZONE")
+                || upper.equals("EVACUATION")
+                || compact.equals("안전구역")
+                || compact.equals("대피구역")) {
+            return "SAFE_ZONE";
+        }
+
+        if (upper.equals("FIRE_ZONE")
+                || upper.equals("FIRE")
+                || upper.equals("DISASTER_ZONE")
+                || upper.equals("DISASTER")
+                || compact.equals("화재구역")
+                || compact.equals("재난구역")) {
+            return "FIRE_ZONE";
+        }
+
+        if (upper.equals("RESTRICTED_ZONE")
+                || upper.equals("RESTRICTED")
+                || compact.equals("제한구역")
+                || compact.equals("출입제한구역")) {
+            return "RESTRICTED_ZONE";
+        }
+
+        return null;
+    }
+
+    private String compactText(String value) {
+        if (value == null) {
+            return "";
+        }
+
+        return value
+                .replaceAll("\\s+", "")
+                .replace("_", "")
+                .replace("-", "")
+                .trim();
     }
 
     private Double resolveDouble(Map<String, Object> element, String key, Double fallback) {

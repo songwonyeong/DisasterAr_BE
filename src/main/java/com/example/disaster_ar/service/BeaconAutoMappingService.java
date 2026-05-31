@@ -306,6 +306,15 @@ public class BeaconAutoMappingService {
         List<ZoneElement> zones = new ArrayList<>();
 
         for (Map<String, Object> element : elements) {
+            /*
+             * 비콘 마커는 위치 표시용 element이지 zone이 아니다.
+             * 이걸 zone 후보로 넣으면 beacon 좌표가 자기 beacon element 안에 들어가면서
+             * zone_element_id = beacon-... / zone_type = BEACON 으로 잘못 저장된다.
+             */
+            if (isBeaconElement(element)) {
+                continue;
+            }
+
             String id = firstText(
                     getString(element, "id"),
                     getString(element, "elementId"),
@@ -320,13 +329,12 @@ public class BeaconAutoMappingService {
                     getString(element, "element_name")
             );
 
-            String zoneType = firstText(
-                    getString(element, "zoneType"),
-                    getString(element, "zone_type"),
-                    getString(element, "elementType"),
-                    getString(element, "element_type"),
-                    getString(element, "type")
-            );
+            String rawZoneType = resolveAutoMappableZoneType(element);
+            String zoneType = normalizeZoneType(rawZoneType);
+
+            if (id == null || zoneType == null) {
+                continue;
+            }
 
             Double x = toDouble(element.get("x"));
             Double y = toDouble(element.get("y"));
@@ -334,7 +342,7 @@ public class BeaconAutoMappingService {
             Double height = firstDouble(element.get("height"), element.get("h"));
 
             /*
-             * 1차 2차 첫 버전은 rect만 자동 판정.
+             * 현재 자동 매핑은 rect 기준으로만 판정한다.
              * x/y/width/height 없는 zone은 자동 판정 불가.
              */
             if (x == null || y == null || width == null || height == null) {
@@ -344,7 +352,7 @@ public class BeaconAutoMappingService {
             zones.add(new ZoneElement(
                     id,
                     name,
-                    normalizeZoneType(zoneType),
+                    zoneType,
                     x,
                     y,
                     width,
@@ -353,6 +361,124 @@ public class BeaconAutoMappingService {
         }
 
         return zones;
+    }
+
+    private String resolveAutoMappableZoneType(Map<String, Object> element) {
+        if (element == null) {
+            return null;
+        }
+
+        /*
+         * zoneType이 명시되어 있으면 이것을 최우선으로 사용한다.
+         * 정상 예: FIRE_ZONE, SAFE_ZONE, RESTRICTED_ZONE
+         */
+        String explicitZoneType = firstText(
+                getString(element, "zoneType"),
+                getString(element, "zone_type")
+        );
+
+        if (isAutoMappableZoneType(explicitZoneType)) {
+            return explicitZoneType;
+        }
+
+        /*
+         * 구버전 데이터 호환용 fallback.
+         * 단, whitelist에 정확히 들어오는 값만 허용한다.
+         * 방/비콘/건물윤곽은 여기서 제외된다.
+         */
+        String fallbackType = firstText(
+                getString(element, "type"),
+                getString(element, "elementType"),
+                getString(element, "element_type")
+        );
+
+        if (isAutoMappableZoneType(fallbackType)) {
+            return fallbackType;
+        }
+
+        return null;
+    }
+
+    private boolean isBeaconElement(Map<String, Object> element) {
+        if (element == null) {
+            return false;
+        }
+
+        if (getString(element, "serverBeaconId") != null
+                || getString(element, "server_beacon_id") != null
+                || getString(element, "beaconId") != null
+                || getString(element, "beacon_id") != null
+                || getString(element, "beaconUuid") != null
+                || getString(element, "beacon_uuid") != null
+                || element.get("beaconNo") != null
+                || element.get("beacon_no") != null
+                || element.get("beaconMajor") != null
+                || element.get("beacon_major") != null
+                || element.get("beaconMinor") != null
+                || element.get("beacon_minor") != null) {
+            return true;
+        }
+
+        String type = firstText(
+                getString(element, "elementType"),
+                getString(element, "element_type"),
+                getString(element, "type")
+        );
+
+        if (type == null) {
+            return false;
+        }
+
+        String upper = type.trim().toUpperCase(Locale.ROOT);
+        String compact = compactText(type);
+
+        return upper.equals("BEACON")
+                || upper.contains("BEACON")
+                || compact.equals("비콘");
+    }
+
+    private boolean isAutoMappableZoneType(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+
+        String upper = value.trim().toUpperCase(Locale.ROOT);
+        String compact = compactText(value);
+        String compactUpper = compact.toUpperCase(Locale.ROOT);
+
+        /*
+         * 명시적 제외. 이 값들은 zone이 아니다.
+         */
+        if (upper.equals("BEACON")
+                || compact.equals("비콘")
+                || compact.equals("방")
+                || compact.equals("건물윤곽")
+                || compactUpper.equals("ROOM")
+                || compactUpper.equals("WALL")
+                || compactUpper.equals("OUTLINE")) {
+            return false;
+        }
+
+        /*
+         * 자동 매핑 대상은 zone 계열만 허용한다.
+         * contains가 아니라 exact match 중심으로 제한한다.
+         */
+        return upper.equals("SAFE_ZONE")
+                || upper.equals("FIRE_ZONE")
+                || upper.equals("DISASTER_ZONE")
+                || upper.equals("RESTRICTED_ZONE")
+                || upper.equals("EVACUATION_ZONE")
+                || upper.equals("SAFE")
+                || upper.equals("FIRE")
+                || upper.equals("DISASTER")
+                || upper.equals("RESTRICTED")
+                || upper.equals("EVACUATION")
+                || compact.equals("안전구역")
+                || compact.equals("대피구역")
+                || compact.equals("재난구역")
+                || compact.equals("화재구역")
+                || compact.equals("제한구역")
+                || compact.equals("출입제한구역");
     }
 
     private Double firstDouble(Object... values) {
@@ -636,36 +762,6 @@ public class BeaconAutoMappingService {
         return created;
     }
 
-    private boolean isZoneType(String value) {
-        if (value == null || value.isBlank()) {
-            return false;
-        }
-
-        String upper = value.trim().toUpperCase(Locale.ROOT);
-        String compact = compactText(value);
-
-        return upper.contains("SAFE_ZONE")
-                || upper.contains("FIRE_ZONE")
-                || upper.contains("DISASTER_ZONE")
-                || upper.contains("RESTRICTED_ZONE")
-                || upper.contains("EVACUATION_ZONE")
-                || upper.contains("SAFE")
-                || upper.contains("FIRE")
-                || upper.contains("DISASTER")
-                || upper.contains("RESTRICTED")
-                || upper.contains("RESTRICT")
-
-                /*
-                 * 한글 구역 타입
-                 */
-                || compact.contains("안전구역")
-                || compact.contains("대피구역")
-                || compact.contains("재난구역")
-                || compact.contains("화재구역")
-                || compact.contains("제한구역")
-                || compact.contains("출입제한");
-    }
-
     private String normalizeZoneType(String value) {
         if (value == null || value.isBlank()) {
             return null;
@@ -674,38 +770,40 @@ public class BeaconAutoMappingService {
         String upper = value.trim().toUpperCase(Locale.ROOT);
         String compact = compactText(value);
 
-        /*
-         * 안전/대피
-         */
-        if (upper.contains("SAFE")
-                || upper.contains("EVACUATION")
-                || compact.contains("안전구역")
-                || compact.contains("대피구역")
-                || compact.contains("대피소")) {
+        if (upper.equals("BEACON")
+                || compact.equals("비콘")
+                || compact.equals("방")
+                || compact.equals("건물윤곽")) {
+            return null;
+        }
+
+        if (upper.equals("SAFE_ZONE")
+                || upper.equals("SAFE")
+                || upper.equals("EVACUATION_ZONE")
+                || upper.equals("EVACUATION")
+                || compact.equals("안전구역")
+                || compact.equals("대피구역")
+                || compact.equals("대피소")) {
             return "SAFE_ZONE";
         }
 
-        /*
-         * 현재 프로젝트에서는 재난 구역을 화재 구역으로 매핑한다.
-         */
-        if (upper.contains("FIRE")
-                || upper.contains("DISASTER")
-                || compact.contains("화재구역")
-                || compact.contains("재난구역")) {
+        if (upper.equals("FIRE_ZONE")
+                || upper.equals("FIRE")
+                || upper.equals("DISASTER_ZONE")
+                || upper.equals("DISASTER")
+                || compact.equals("화재구역")
+                || compact.equals("재난구역")) {
             return "FIRE_ZONE";
         }
 
-        /*
-         * 제한/출입 제한
-         */
-        if (upper.contains("RESTRICTED")
-                || upper.contains("RESTRICT")
-                || compact.contains("제한구역")
-                || compact.contains("출입제한")) {
+        if (upper.equals("RESTRICTED_ZONE")
+                || upper.equals("RESTRICTED")
+                || compact.equals("제한구역")
+                || compact.equals("출입제한구역")) {
             return "RESTRICTED_ZONE";
         }
 
-        return upper;
+        return null;
     }
 
     private String compactText(String value) {
