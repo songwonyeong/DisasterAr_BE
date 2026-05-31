@@ -27,6 +27,7 @@ public class ScenarioEvaluationDetailResponse {
     public static class EvaluationSummary {
         private String evaluationId;
         private Double scoreTotal;
+        private Double scoreTotalRounded;
         private String scoreJson;
         private String detailsJson;
         private String feedbackText;

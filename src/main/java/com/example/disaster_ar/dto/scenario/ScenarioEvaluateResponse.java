@@ -16,6 +16,7 @@ import java.util.List;
 public class ScenarioEvaluateResponse {
     private String scenarioId;
     private Double scenarioScore;
+    private Double scenarioScoreRounded;
     private Integer evaluatedStudentCount;
     private List<StudentEvaluationItem> studentEvaluations;
 

@@ -862,6 +862,7 @@ public class ScenarioService {
         return ScenarioEvaluateResponse.builder()
                 .scenarioId(scenario.getId())
                 .scenarioScore(scenarioScore)
+                .scenarioScoreRounded(roundToOneDecimal(scenarioScore))
                 .evaluatedStudentCount(counted)
                 .studentEvaluations(studentResults)
                 .build();
@@ -949,6 +950,7 @@ public class ScenarioService {
             scenarioSummary = ScenarioEvaluationDetailResponse.EvaluationSummary.builder()
                     .evaluationId(scenarioEval.getId())
                     .scoreTotal(scenarioEval.getScoreTotal())
+                    .scoreTotalRounded(roundToOneDecimal(scenarioEval.getScoreTotal()))
                     .scoreJson(scenarioEval.getScoreJson())
                     .detailsJson(scenarioEval.getDetailsJson())
                     .feedbackText(scenarioEval.getFeedbackText())
@@ -1017,6 +1019,18 @@ public class ScenarioService {
                 .scenarioEvaluation(scenarioSummary)
                 .studentEvaluations(studentSummaries)
                 .build();
+    }
+
+    private Double roundToOneDecimal(Double value) {
+        if (value == null) {
+            return null;
+        }
+
+        return Math.round(value * 10.0) / 10.0;
+    }
+
+    private Double roundToOneDecimal(double value) {
+        return Math.round(value * 10.0) / 10.0;
     }
 
     private Map<String, Object> readJsonMapSafely(String json) {
