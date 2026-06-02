@@ -5,12 +5,11 @@ import com.example.disaster_ar.domain.v4.ScenarioTeamV4;
 import com.example.disaster_ar.domain.v4.ScenarioV4;
 import com.example.disaster_ar.dto.scenario.TeamDistributionRequest;
 import com.example.disaster_ar.dto.scenario.TeamDistributionResponse;
-import com.example.disaster_ar.repository.ScenarioRepository;
-import com.example.disaster_ar.repository.ScenarioTeamRepositoryV4;
-import com.example.disaster_ar.repository.StudentRepositoryV4;
+import com.example.disaster_ar.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.example.disaster_ar.domain.v4.enums.*;
 
 import java.util.*;
 
@@ -21,6 +20,7 @@ public class ScenarioTeamDistributionService {
     private final ScenarioRepository scenarioRepository;
     private final ScenarioTeamRepositoryV4 scenarioTeamRepositoryV4;
     private final StudentRepositoryV4 studentRepositoryV4;
+    private final ScenarioTeamMemberRepositoryV4 scenarioTeamMemberRepositoryV4;
 
     @Transactional
     public TeamDistributionResponse distributeTeams(String scenarioId, TeamDistributionRequest req) {
@@ -49,8 +49,12 @@ public class ScenarioTeamDistributionService {
         List<TeamDistributionResponse.TeamResult> results;
 
         if ("MANUAL".equalsIgnoreCase(mode)) {
+            scenario.setTeamMode(TeamMode.MANUAL);
+            scenarioRepository.save(scenario);
             results = distributeManual(scenario, totalStudents, req);
         } else {
+            scenario.setTeamMode(TeamMode.AUTO);
+            scenarioRepository.save(scenario);
             results = distributeAuto(scenario, totalStudents);
         }
 
@@ -159,6 +163,31 @@ public class ScenarioTeamDistributionService {
         if (sum != totalStudents) {
             throw new IllegalArgumentException("수동 팀 인원수 합계가 전체 학생 수와 일치해야 합니다.");
         }
+
+        Set<String> requestedTeamCodes = new HashSet<>();
+        for (TeamDistributionRequest.ManualTeamCount c : req.getManualTeamCounts()) {
+            requestedTeamCodes.add(c.getTeamCode());
+        }
+
+        /*
+         * 수동 정원을 다시 저장하면 기존 학생 배정은 더 이상 신뢰할 수 없다.
+         * 기존 배정을 먼저 삭제해야 요청에 없는 팀 row 정리 시 FK 오류를 줄일 수 있다.
+         */
+        scenarioTeamMemberRepositoryV4.deleteByScenarioIdForReassign(scenario.getId());
+        scenarioTeamMemberRepositoryV4.flush();
+
+        List<ScenarioTeamV4> existingTeams = scenarioTeamRepositoryV4
+                .findByScenario_IdOrderByTeamCodeAsc(scenario.getId());
+
+        for (ScenarioTeamV4 existingTeam : existingTeams) {
+            if (!requestedTeamCodes.contains(existingTeam.getTeamCode())) {
+                existingTeam.setMinMembers(0);
+                existingTeam.setMaxMembers(0);
+                scenarioTeamRepositoryV4.save(existingTeam);
+            }
+        }
+
+        scenarioTeamRepositoryV4.flush();
 
         List<TeamDistributionResponse.TeamResult> results = new ArrayList<>();
 

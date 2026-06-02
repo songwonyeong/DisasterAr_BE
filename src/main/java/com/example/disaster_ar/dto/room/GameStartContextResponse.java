@@ -16,6 +16,11 @@ public class GameStartContextResponse {
     private String scenarioId;
     private String scenarioType;
 
+    private String studentId;
+    private String teamId;
+    private String teamCode;
+    private String teamName;
+
     private String trainingState;
     private LocalDateTime trainingStartedAt;
 

@@ -23,4 +23,5 @@ public interface ScenarioAssignmentRepositoryV4 extends JpaRepository<ScenarioAs
     );
 
     boolean existsByScenario_Id(String scenarioId);
+    boolean existsByBeacon_Id(String beaconId);
 }

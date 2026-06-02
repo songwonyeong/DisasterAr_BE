@@ -18,7 +18,7 @@ public class CorsConfig {
 
         config.setAllowedOrigins(Arrays.asList("http://localhost:3000", "https://graduation-dashboard.netlify.app"));
         config.setAllowedMethods(Arrays.asList("GET","POST","PUT","DELETE","PATCH","OPTIONS"));
-        config.setAllowedHeaders(Arrays.asList("Content-Type", "Authorization", "X-Requested-With"));
+//        config.setAllowedHeaders(Arrays.asList("Content-Type", "Authorization", "X-Requested-With"));
         config.setAllowedHeaders(Arrays.asList("*"));
         config.setAllowCredentials(false);
         config.setMaxAge(3600L);

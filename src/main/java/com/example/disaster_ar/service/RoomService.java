@@ -485,6 +485,8 @@ public class RoomService {
 
         ClassroomV4 saved = classroomRepository.save(classroom);
 
+        initializeActiveStudentStatusForTraining(saved.getId());
+
         scenarioAssignmentService.createDefaultFireAssignmentsIfEmpty(scenario.getId(), saved.getId());
 
         prepareTeamsForTraining(scenario, saved.getId());
@@ -500,6 +502,21 @@ public class RoomService {
                 .trainingEndedAt(saved.getTrainingEndedAt())
                 .activeScenarioId(saved.getActiveScenario() != null ? saved.getActiveScenario().getId() : null)
                 .build();
+    }
+
+    private void initializeActiveStudentStatusForTraining(String classroomId) {
+        List<StudentV4> activeStudents =
+                studentRepositoryV4.findByClassroom_IdAndIsKickedFalseOrderByJoinedAtAsc(classroomId);
+
+        if (activeStudents == null || activeStudents.isEmpty()) {
+            return;
+        }
+
+        for (StudentV4 student : activeStudents) {
+            student.setStatus(StudentStatus.EVACUATING);
+        }
+
+        studentRepositoryV4.saveAll(activeStudents);
     }
 
     private ScenarioTeamV4 findOrCreateTeam(
@@ -682,6 +699,10 @@ public class RoomService {
     }
 
     public GameStartContextResponse getGameStartContext(String classroomId) {
+        return getGameStartContext(classroomId, null);
+    }
+
+    public GameStartContextResponse getGameStartContext(String classroomId, String studentId) {
 
         ClassroomV4 classroom = classroomRepository.findById(classroomId)
                 .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
@@ -697,7 +718,31 @@ public class RoomService {
             throw new IllegalArgumentException("현재 활성 구조도가 없습니다.");
         }
 
+        StudentV4 student = null;
+        ScenarioTeamMemberV4 teamMember = null;
+        ScenarioTeamV4 team = null;
+
+        if (studentId != null && !studentId.isBlank()) {
+            student = studentRepositoryV4.findById(studentId)
+                    .orElseThrow(() -> new IllegalArgumentException("학생이 존재하지 않습니다."));
+
+            if (student.getClassroom() == null
+                    || !classroom.getId().equals(student.getClassroom().getId())) {
+                throw new IllegalArgumentException("학생이 해당 교실 소속이 아닙니다.");
+            }
+
+            teamMember = scenarioTeamMemberRepositoryV4
+                    .findByScenario_IdAndStudent_Id(scenario.getId(), student.getId())
+                    .orElse(null);
+
+            team = teamMember != null ? teamMember.getTeam() : null;
+        }
+
         return GameStartContextResponse.builder()
+                .studentId(student != null ? student.getId() : null)
+                .teamId(team != null ? team.getId() : null)
+                .teamCode(team != null ? team.getTeamCode() : null)
+                .teamName(team != null ? team.getTeamName() : null)
                 .classroomId(classroom.getId())
                 .scenarioId(scenario.getId())
                 .scenarioType(scenario.getScenarioType() != null ? scenario.getScenarioType().name() : null)

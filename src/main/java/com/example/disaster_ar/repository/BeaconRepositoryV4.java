@@ -26,4 +26,23 @@ public interface BeaconRepositoryV4 extends JpaRepository<BeaconV4, String> {
             Integer major,
             Integer minor
     );
+
+    boolean existsBySchool_IdAndUuidAndMajorAndMinor(
+            String schoolId,
+            String uuid,
+            Integer major,
+            Integer minor
+    );
+
+    boolean existsBySchool_IdAndFloorIndexAndBeaconNo(
+            String schoolId,
+            Integer floorIndex,
+            Integer beaconNo
+    );
+
+    Optional<BeaconV4> findBySchool_IdAndFloorIndexAndBeaconNo(
+            String schoolId,
+            Integer floorIndex,
+            Integer beaconNo
+    );
 }

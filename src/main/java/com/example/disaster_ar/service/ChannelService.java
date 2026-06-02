@@ -14,6 +14,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
+import com.example.disaster_ar.exception.ApiException;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -47,22 +48,31 @@ public class ChannelService {
                                   List<MultipartFile> mapImages,
                                   String uploadDir) {
 
+        String normalizedSchoolName = schoolName != null ? schoolName.trim() : null;
+
+        if (normalizedSchoolName == null || normalizedSchoolName.isBlank()) {
+            throw ApiException.badRequest(
+                    "INVALID_CHANNEL_REQUEST",
+                    "학교 이름은 필수입니다."
+            );
+        }
+
         System.out.println("===== createChannel start =====");
         System.out.println("schoolName = " + schoolName);
         System.out.println("uploadDir(raw) = " + uploadDir);
 
-        SchoolV4 school = schoolRepository.findBySchoolName(schoolName)
-                .orElseGet(() -> {
-                    SchoolV4 s = new SchoolV4();
-                    if (s.getId() == null) s.setId(UUID.randomUUID().toString());
-                    s.setSchoolName(schoolName);
-                    s.setAccessCode(generateAccessCode());
-                    return s;
-                });
-
-        if (!schoolRepository.existsById(school.getId())) {
-            school = schoolRepository.save(school);
+        if (schoolRepository.findBySchoolName(normalizedSchoolName).isPresent()) {
+            throw ApiException.conflict(
+                    "DUPLICATE_SCHOOL_NAME",
+                    "이미 존재하는 학교 이름입니다."
+            );
         }
+
+        SchoolV4 school = new SchoolV4();
+        if (school.getId() == null) school.setId(UUID.randomUUID().toString());
+        school.setSchoolName(normalizedSchoolName);
+        school.setAccessCode(generateAccessCode());
+        school = schoolRepository.save(school);
 
         System.out.println("school.id = " + school.getId());
         System.out.println("mapImages null? " + (mapImages == null));

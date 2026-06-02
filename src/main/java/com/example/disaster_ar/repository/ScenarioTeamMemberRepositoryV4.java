@@ -35,7 +35,7 @@ public interface ScenarioTeamMemberRepositoryV4 extends JpaRepository<ScenarioTe
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(value = """
-    DELETE FROM scenario_team_members
+DELETE FROM scenario_team_members
     WHERE scenario_id = :scenarioId
 """, nativeQuery = true)
     int deleteByScenarioIdForReassign(@Param("scenarioId") String scenarioId);

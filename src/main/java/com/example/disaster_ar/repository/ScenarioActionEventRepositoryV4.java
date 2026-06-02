@@ -61,4 +61,7 @@ public interface ScenarioActionEventRepositoryV4 extends JpaRepository<ScenarioA
             @Param("assignmentId") String assignmentId,
             @Param("studentId") String studentId
     );
+
+    boolean existsByBeacon_id(String beaconId);
+    boolean existsByBeacon_Id(String beaconId);
 }

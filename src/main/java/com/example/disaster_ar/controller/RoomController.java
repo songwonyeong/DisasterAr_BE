@@ -161,10 +161,11 @@ public class RoomController {
 
     @GetMapping("/{classroomId}/game-start-context")
     public ResponseEntity<GameStartContextResponse> getGameStartContext(
-            @PathVariable String classroomId
+            @PathVariable String classroomId,
+            @RequestParam(required = false) String studentId
     ) {
         return ResponseEntity.ok(
-                roomService.getGameStartContext(classroomId)
+                roomService.getGameStartContext(classroomId, studentId)
         );
     }
 

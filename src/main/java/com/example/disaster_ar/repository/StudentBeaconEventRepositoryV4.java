@@ -10,4 +10,9 @@ public interface StudentBeaconEventRepositoryV4 extends JpaRepository<StudentBea
             String scenarioId,
             String studentId
     );
+
+    boolean existsByFromBeacon_IdOrToBeacon_Id(
+            String fromBeaconId,
+            String toBeaconId
+    );
 }

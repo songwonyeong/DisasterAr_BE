@@ -1,7 +1,6 @@
 package com.example.disaster_ar.service;
 
 import com.example.disaster_ar.domain.v4.*;
-import com.example.disaster_ar.domain.v4.enums.BeaconState;
 import com.example.disaster_ar.dto.beacon.BeaconScanRequest;
 import com.example.disaster_ar.dto.beacon.BeaconSignal;
 import com.example.disaster_ar.repository.*;
@@ -10,8 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.example.disaster_ar.domain.v4.BeaconElementMapV4;
-import com.example.disaster_ar.domain.v4.enums.ProgressStatus;
-import com.example.disaster_ar.domain.v4.enums.ScenarioActionType;
+import com.example.disaster_ar.domain.v4.enums.*;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -129,6 +127,7 @@ public class BeaconTrackingService {
 
             if (strongest.getRssi() < prevRssi + 5) {
                 student.setLastBeaconSeenAt(LocalDateTime.now());
+                updateStudentStatusByZoneMapping(student, classroom, mapping);
                 student.setBeaconState(BeaconState.DETECTED);
                 studentRepository.save(student);
                 return;
@@ -144,6 +143,7 @@ public class BeaconTrackingService {
         student.setLastBeacon(beacon);
         student.setLastBeaconRssi(strongest.getRssi());
         student.setLastBeaconSeenAt(LocalDateTime.now());
+        updateStudentStatusByZoneMapping(student, classroom, mapping);
         student.setBeaconState(BeaconState.DETECTED);
         studentRepository.save(student);
 
@@ -194,6 +194,50 @@ public class BeaconTrackingService {
                 strongest.getRssi(),
                 mapping
         );
+    }
+
+    private void updateStudentStatusByZoneMapping(
+            StudentV4 student,
+            ClassroomV4 classroom,
+            BeaconElementMapV4 mapping
+    ) {
+        if (student == null) {
+            return;
+        }
+
+        String zoneType = mapping != null ? mapping.getZoneType() : null;
+
+        if (isSafeZoneText(zoneType)) {
+            student.setStatus(StudentStatus.EVACUATED);
+            return;
+        }
+
+        if (isRestrictedZoneText(zoneType)) {
+            student.setStatus(StudentStatus.RESTRICTED);
+            return;
+        }
+
+        if (classroom != null && classroom.getTrainingState() == TrainingState.RUNNING) {
+            student.setStatus(StudentStatus.EVACUATING);
+        }
+    }
+
+    private boolean isRestrictedZoneText(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+
+        String upper = value.toUpperCase(Locale.ROOT);
+        String compact = value
+                .replaceAll("\\s+", "")
+                .replace("_", "")
+                .replace("-", "")
+                .trim();
+
+        return upper.contains("RESTRICTED_ZONE")
+                || upper.contains("RESTRICTED")
+                || compact.contains("제한구역")
+                || compact.contains("출입제한구역");
     }
 
     private void completeSafeZoneMissionIfNeeded(
@@ -295,14 +339,19 @@ public class BeaconTrackingService {
         }
 
         String upper = value.toUpperCase(Locale.ROOT);
+        String compact = value
+                .replaceAll("\\s+", "")
+                .replace("_", "")
+                .replace("-", "")
+                .trim();
 
         return upper.contains("SAFE_ZONE")
-                || upper.contains("SAFETY_ZONE")
                 || upper.contains("EVACUATION_ZONE")
                 || upper.contains("SAFE")
-                || value.contains("안전구역")
-                || value.contains("대피구역")
-                || value.contains("대피소");
+                || upper.contains("EVACUATION")
+                || compact.contains("안전구역")
+                || compact.contains("대피구역")
+                || compact.contains("대피소");
     }
 
     private boolean isSafeZoneElement(ClassroomV4 classroom, String elementId) {

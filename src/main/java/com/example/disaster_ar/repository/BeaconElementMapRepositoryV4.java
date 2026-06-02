@@ -8,6 +8,10 @@ import java.util.Optional;
 
 public interface BeaconElementMapRepositoryV4 extends JpaRepository<BeaconElementMapV4, String> {
 
+    void deleteByBeacon_Id(String beaconId);
+
+    boolean existsByBeacon_Id(String beaconId);
+
     Optional<BeaconElementMapV4> findByBeacon_Id(String beaconId);
 
     /**
