@@ -20,14 +20,16 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class YoloService {
 
-    @Value("${floorplan.analyzer.base-url}")
-    private String aiBaseUrl;
+    @Value("${yolo.server.base-url}")
+    private String yoloServerBaseUrl;
 
     private final RestTemplate restTemplate = new RestTemplate();
 
     public Map<String, Object> detect(MultipartFile file, Double conf) {
 
-        String url = aiBaseUrl + "/detect?conf=" + (conf != null ? conf : 0.3);
+        String url = normalizeBaseUrl(yoloServerBaseUrl)
+                + "/detect?conf="
+                + (conf != null ? conf : 0.3);
 
         MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
 
@@ -53,5 +55,19 @@ public class YoloService {
         );
 
         return response.getBody();
+    }
+
+    private String normalizeBaseUrl(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("YOLO 서버 주소가 설정되어 있지 않습니다.");
+        }
+
+        String trimmed = value.trim();
+
+        while (trimmed.endsWith("/")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+
+        return trimmed;
     }
 }

@@ -318,13 +318,15 @@ public class ChannelService {
         builder.part("image", resource)
                 .contentType(MediaType.APPLICATION_OCTET_STREAM);
 
-        PythonFloorplanAnalyzeResponse pythonResponse = webClient.post()
-                .uri(analyzerBaseUrl + "/analyze-floorplan")
-                .contentType(MediaType.MULTIPART_FORM_DATA)
-                .body(BodyInserters.fromMultipartData(builder.build()))
-                .retrieve()
-                .bodyToMono(PythonFloorplanAnalyzeResponse.class)
-                .block();
+        PythonFloorplanAnalyzeResponse pythonResponse =
+                webClient.post()
+                        .uri(normalizeBaseUrl(analyzerBaseUrl) + "/analyze-floorplan")
+                        .header("ngrok-skip-browser-warning", "true")
+                        .contentType(MediaType.MULTIPART_FORM_DATA)
+                        .body(BodyInserters.fromMultipartData(builder.build()))
+                        .retrieve()
+                        .bodyToMono(PythonFloorplanAnalyzeResponse.class)
+                        .block();
 
         if (pythonResponse == null) {
             throw new IllegalStateException("구조도 분석 서버 응답이 비어 있습니다.");
@@ -338,6 +340,20 @@ public class ChannelService {
                 .elements(pythonResponse.getElements())
                 .ocrAvailable(Boolean.TRUE.equals(pythonResponse.getOcr_available()))
                 .build();
+    }
+
+    private String normalizeBaseUrl(String value) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException("구조도 분석 서버 주소가 설정되어 있지 않습니다.");
+        }
+
+        String trimmed = value.trim();
+
+        while (trimmed.endsWith("/")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+
+        return trimmed;
     }
 
     public ChannelMapResponse addChannelMap(
