@@ -52,15 +52,28 @@ public class GlobalExceptionHandler {
             );
         }
 
-        if (lower.contains("uq_ibeacon_triplet_per_school")
-                || lower.contains("uq_beacon_no_per_school_floor")
-                || lower.contains("uuid") && lower.contains("major") && lower.contains("minor")
-                || lower.contains("beacon_no")) {
+        boolean isDuplicate = lower.contains("duplicate");
+
+        if (isDuplicate && (
+                lower.contains("uq_ibeacon_triplet_per_school")
+                        || lower.contains("uq_beacon_no_per_school_floor")
+        )) {
             return conflictBody(
                     "DUPLICATE_BEACON",
                     "이미 등록된 비콘입니다.",
                     request
             );
+        }
+
+        if (lower.contains("data too long") && lower.contains("uuid")) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of(
+                    "timestamp", LocalDateTime.now().toString(),
+                    "status", 400,
+                    "error", "Bad Request",
+                    "code", "INVALID_BEACON_REQUEST",
+                    "message", "uuid 형식이 올바르지 않습니다.",
+                    "path", request.getRequestURI()
+            ));
         }
 
         log.warn("DataIntegrityViolation [{}] {}", request.getRequestURI(), message, e);

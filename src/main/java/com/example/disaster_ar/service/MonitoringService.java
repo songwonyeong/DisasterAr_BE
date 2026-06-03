@@ -19,6 +19,7 @@ public class MonitoringService {
     private final StudentRepositoryV4 studentRepositoryV4;
     private final BeaconElementMapRepositoryV4 beaconElementMapRepositoryV4;
     private final ObjectMapper objectMapper;
+    private final BeaconRepositoryV4 beaconRepositoryV4;
 
     public MonitoringMapResponse getMonitoringMap(String classroomId) {
 
@@ -274,6 +275,8 @@ public class MonitoringService {
                 );
 
         List<BeaconMarkerResponse> markers = new ArrayList<>();
+        Set<String> renderedBeaconIds = new HashSet<>();
+        Set<String> renderedBeaconElementIds = new HashSet<>();
 
         for (BeaconElementMapV4 mapping : mappings) {
             if (mapping.getBeacon() == null) {
@@ -370,9 +373,181 @@ public class MonitoringService {
                             .students(studentResponses)
                             .build()
             );
+
+            renderedBeaconIds.add(beacon.getId());
+
+            if (beaconElementId != null) {
+                renderedBeaconElementIds.add(beaconElementId);
+            }
+
         }
 
+        addUnmappedBeaconElementMarkers(
+                classroom,
+                floorIndex,
+                elements,
+                studentsByBeaconId,
+                markers,
+                renderedBeaconIds,
+                renderedBeaconElementIds
+        );
+
         return markers;
+    }
+
+    private void addUnmappedBeaconElementMarkers(
+            ClassroomV4 classroom,
+            Integer floorIndex,
+            List<Map<String, Object>> elements,
+            Map<String, List<StudentV4>> studentsByBeaconId,
+            List<BeaconMarkerResponse> markers,
+            Set<String> renderedBeaconIds,
+            Set<String> renderedBeaconElementIds
+    ) {
+        if (classroom == null || classroom.getSchool() == null || floorIndex == null) {
+            return;
+        }
+
+        if (elements == null || elements.isEmpty()) {
+            return;
+        }
+
+        for (Map<String, Object> element : elements) {
+            if (!isBeaconElement(element)) {
+                continue;
+            }
+
+            String beaconElementId = trimToNull(asString(firstNonNull(
+                    element.get("id"),
+                    element.get("elementId"),
+                    element.get("element_id")
+            )));
+
+            if (beaconElementId != null && renderedBeaconElementIds.contains(beaconElementId)) {
+                continue;
+            }
+
+            String serverBeaconId = trimToNull(asString(firstNonNull(
+                    element.get("serverBeaconId"),
+                    element.get("server_beacon_id"),
+                    element.get("beaconId"),
+                    element.get("beacon_id")
+            )));
+
+            BeaconV4 beacon = null;
+
+            if (serverBeaconId != null && !renderedBeaconIds.contains(serverBeaconId)) {
+                beacon = beaconRepositoryV4.findById(serverBeaconId).orElse(null);
+            }
+
+            if (beacon == null) {
+                Integer beaconNo = asInteger(firstNonNull(
+                        element.get("beaconNo"),
+                        element.get("beacon_no")
+                ));
+
+                if (beaconNo != null) {
+                    beacon = beaconRepositoryV4
+                            .findBySchool_IdAndFloorIndexAndBeaconNo(
+                                    classroom.getSchool().getId(),
+                                    floorIndex,
+                                    beaconNo
+                            )
+                            .orElse(null);
+                }
+            }
+
+            /*
+             * serverBeaconId/beaconNo로 실제 등록 비콘을 못 찾으면
+             * 학생 감지 데이터와 연결할 수 없으므로 marker로 내려주지 않는다.
+             */
+            if (beacon == null) {
+                continue;
+            }
+
+            if (renderedBeaconIds.contains(beacon.getId())) {
+                continue;
+            }
+
+            if (beacon.getFloorIndex() != null
+                    && !Objects.equals(beacon.getFloorIndex(), floorIndex)) {
+                continue;
+            }
+
+            List<StudentV4> detectedStudents =
+                    studentsByBeaconId.getOrDefault(beacon.getId(), List.of());
+
+            List<MonitoringStudentResponse> studentResponses = detectedStudents.stream()
+                    .map(this::toMonitoringStudent)
+                    .toList();
+
+            markers.add(
+                    BeaconMarkerResponse.builder()
+                            .beaconId(beacon.getId())
+                            .beaconNo(beacon.getBeaconNo())
+
+                            /*
+                             * zone mapping이 없는 fallback marker.
+                             */
+                            .elementId(null)
+                            .beaconElementId(beaconElementId)
+                            .zoneElementId(null)
+
+                            .placementName(resolvePlacementName(element, beacon))
+                            .zoneType(null)
+                            .thresholdRssi(null)
+                            .isActive(true)
+
+                            .x(resolveDouble(element, "x", beacon.getX()))
+                            .y(resolveDouble(element, "y", beacon.getY()))
+                            .width(resolveDouble(element, "width", null))
+                            .height(resolveDouble(element, "height", null))
+
+                            .studentCount(studentResponses.size())
+                            .students(studentResponses)
+                            .build()
+            );
+
+            renderedBeaconIds.add(beacon.getId());
+
+            if (beaconElementId != null) {
+                renderedBeaconElementIds.add(beaconElementId);
+            }
+        }
+    }
+
+    private boolean isBeaconElement(Map<String, Object> element) {
+        if (element == null) {
+            return false;
+        }
+
+        if (element.get("serverBeaconId") != null
+                || element.get("server_beacon_id") != null
+                || element.get("beaconId") != null
+                || element.get("beacon_id") != null
+                || element.get("beaconNo") != null
+                || element.get("beacon_no") != null
+                || element.get("beaconUuid") != null
+                || element.get("beacon_uuid") != null) {
+            return true;
+        }
+
+        String type = asString(firstNonNull(
+                element.get("elementType"),
+                element.get("element_type"),
+                element.get("type")
+        ));
+
+        if (type == null) {
+            return false;
+        }
+
+        String upper = type.trim().toUpperCase(Locale.ROOT);
+        String compact = compactText(type);
+
+        return upper.equals("BEACON")
+                || upper.contains("BEACON")
+                || compact.equals("비콘");
     }
 
     private MonitoringStudentResponse toMonitoringStudent(StudentV4 student) {

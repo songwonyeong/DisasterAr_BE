@@ -35,7 +35,7 @@ public class BeaconService {
                         "schoolId에 해당하는 학교가 존재하지 않습니다."
                 ));
 
-        String uuid = req.getUuid().trim();
+        String uuid = normalizeUuidOrThrow(req.getUuid());
 
         if (beaconRepositoryV4.existsBySchool_IdAndUuidAndMajorAndMinor(
                 school.getId(),
@@ -118,12 +118,7 @@ public class BeaconService {
             );
         }
 
-        if (req.getUuid() == null || req.getUuid().isBlank()) {
-            throw ApiException.badRequest(
-                    "INVALID_BEACON_REQUEST",
-                    "uuid는 필수입니다."
-            );
-        }
+        normalizeUuidOrThrow(req.getUuid());
 
         if (req.getMajor() == null || req.getMinor() == null) {
             throw ApiException.badRequest(
@@ -148,13 +143,37 @@ public class BeaconService {
         return value.trim();
     }
 
+    private String normalizeUuidOrThrow(String rawUuid) {
+        if (rawUuid == null || rawUuid.isBlank()) {
+            throw ApiException.badRequest(
+                    "INVALID_BEACON_REQUEST",
+                    "uuid는 필수입니다."
+            );
+        }
+
+        String uuid = rawUuid.trim();
+
+        try {
+            UUID.fromString(uuid);
+        } catch (Exception e) {
+            throw ApiException.badRequest(
+                    "INVALID_BEACON_REQUEST",
+                    "uuid 형식이 올바르지 않습니다."
+            );
+        }
+
+        return uuid;
+    }
+
     public BeaconResponse updateBeacon(String beaconId, BeaconRequest req) {
         BeaconV4 beacon = beaconRepositoryV4.findById(beaconId)
                 .orElseThrow(() -> new IllegalArgumentException("비콘이 존재하지 않습니다."));
 
         SchoolV4 school = beacon.getSchool();
 
-        String nextUuid = req.getUuid() != null ? req.getUuid().trim() : beacon.getUuid();
+        String nextUuid = req.getUuid() != null
+                ? normalizeUuidOrThrow(req.getUuid())
+                : beacon.getUuid();
         Integer nextMajor = req.getMajor() != null ? req.getMajor() : beacon.getMajor();
         Integer nextMinor = req.getMinor() != null ? req.getMinor() : beacon.getMinor();
         Integer nextFloorIndex = req.getFloorIndex() != null ? req.getFloorIndex() : beacon.getFloorIndex();
