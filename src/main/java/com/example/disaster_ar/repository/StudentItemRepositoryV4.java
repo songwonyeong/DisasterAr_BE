@@ -15,4 +15,6 @@ public interface StudentItemRepositoryV4 extends JpaRepository<StudentItemV4, St
     );
 
     List<StudentItemV4> findByScenario_IdAndStudent_Id(String scenarioId, String studentId);
+
+    void deleteByScenario_Id(String scenarioId);
 }

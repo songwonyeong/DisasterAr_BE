@@ -29,4 +29,7 @@ public interface ScenarioTriggerRepositoryV4 extends JpaRepository<ScenarioTrigg
     List<ScenarioTriggerV4> findByScenario_IdAndAssignment_Id(
             String scenarioId,
             String assignmentId
-    );}
+    );
+
+    void deleteByScenario_Id(String scenarioId);
+}

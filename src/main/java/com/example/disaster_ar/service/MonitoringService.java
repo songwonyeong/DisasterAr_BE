@@ -1,7 +1,7 @@
 package com.example.disaster_ar.service;
 
 import com.example.disaster_ar.domain.v4.*;
-import com.example.disaster_ar.domain.v4.enums.BeaconState;
+import com.example.disaster_ar.domain.v4.enums.*;
 import com.example.disaster_ar.dto.monitoring.*;
 import com.example.disaster_ar.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,6 +20,7 @@ public class MonitoringService {
     private final BeaconElementMapRepositoryV4 beaconElementMapRepositoryV4;
     private final ObjectMapper objectMapper;
     private final BeaconRepositoryV4 beaconRepositoryV4;
+    private final ScenarioTeamMemberRepositoryV4 scenarioTeamMemberRepositoryV4;
 
     public MonitoringMapResponse getMonitoringMap(String classroomId) {
 
@@ -36,13 +37,8 @@ public class MonitoringService {
             throw new IllegalArgumentException("활성 구조도의 floorsJson이 비어 있습니다.");
         }
 
-        List<StudentV4> students = studentRepositoryV4
-                .findByClassroom_IdOrderByJoinedAtAsc(classroom.getId());
-
-        Map<String, List<StudentV4>> studentsByBeaconId = students.stream()
-                .filter(s -> s.getLastBeacon() != null)
-                .filter(s -> s.getBeaconState() == BeaconState.DETECTED)
-                .collect(Collectors.groupingBy(s -> s.getLastBeacon().getId()));
+        Map<String, List<StudentV4>> studentsByBeaconId =
+                buildCurrentSessionStudentsByBeaconId(classroom);
 
         List<MonitoringFloorResponse> floors = parseFloors(
                 mapVersion.getFloorsJson(),
@@ -55,6 +51,69 @@ public class MonitoringService {
                 .mapVersionId(mapVersion.getId())
                 .floors(floors)
                 .build();
+    }
+
+    private Map<String, List<StudentV4>> buildCurrentSessionStudentsByBeaconId(
+            ClassroomV4 classroom
+    ) {
+        if (classroom == null) {
+            return Map.of();
+        }
+
+        if (classroom.getTrainingState() != TrainingState.RUNNING) {
+            return Map.of();
+        }
+
+        if (classroom.getActiveScenario() == null) {
+            return Map.of();
+        }
+
+        if (classroom.getTrainingStartedAt() == null) {
+            return Map.of();
+        }
+
+        List<StudentV4> participants = findCurrentTrainingParticipants(classroom);
+
+        return participants.stream()
+                .filter(student -> !Boolean.TRUE.equals(student.getIsKicked()))
+                .filter(student -> student.getLastBeacon() != null)
+                .filter(student -> student.getBeaconState() == BeaconState.DETECTED)
+                .filter(student -> student.getLastBeaconSeenAt() != null)
+                .filter(student -> !student.getLastBeaconSeenAt().isBefore(classroom.getTrainingStartedAt()))
+                .collect(Collectors.groupingBy(student -> student.getLastBeacon().getId()));
+    }
+
+    private List<StudentV4> findCurrentTrainingParticipants(ClassroomV4 classroom) {
+        if (classroom == null || classroom.getActiveScenario() == null) {
+            return List.of();
+        }
+
+        String scenarioId = classroom.getActiveScenario().getId();
+
+        Map<String, StudentV4> result = new LinkedHashMap<>();
+
+        for (ScenarioTeamMemberV4 member :
+                scenarioTeamMemberRepositoryV4.findByScenario_IdOrderByAssignedAtAsc(scenarioId)) {
+
+            StudentV4 student = member.getStudent();
+
+            if (student == null) {
+                continue;
+            }
+
+            if (student.getClassroom() == null
+                    || !classroom.getId().equals(student.getClassroom().getId())) {
+                continue;
+            }
+
+            if (Boolean.TRUE.equals(student.getIsKicked())) {
+                continue;
+            }
+
+            result.putIfAbsent(student.getId(), student);
+        }
+
+        return new ArrayList<>(result.values());
     }
 
     private List<MonitoringFloorResponse> parseFloors(

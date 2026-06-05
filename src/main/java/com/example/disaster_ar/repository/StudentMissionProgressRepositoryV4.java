@@ -14,4 +14,6 @@ public interface StudentMissionProgressRepositoryV4
             String assignmentId,
             String studentId
     );
+
+    void deleteByScenario_Id(String scenarioId);
 }

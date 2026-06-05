@@ -70,6 +70,10 @@ public class RoomService {
     private final EntityManager entityManager;
     private final ScenarioTeamDistributionService scenarioTeamDistributionService;
     private final ScenarioTeamAssignmentService scenarioTeamAssignmentService;
+    private final TeamMissionStepProgressRepositoryV4 teamMissionStepProgressRepositoryV4;
+    private final QuizSubmissionRepositoryV4 quizSubmissionRepositoryV4;
+    private final CardQuizSubmissionRepositoryV4 cardQuizSubmissionRepositoryV4;
+    private final EvaluationRepositoryV4 evaluationRepositoryV4;
 
 
     public RoomResponse createRoom(RoomCreateRequest req) {
@@ -485,13 +489,13 @@ public class RoomService {
 
         ClassroomV4 saved = classroomRepository.save(classroom);
 
-        initializeActiveStudentStatusForTraining(saved.getId());
-
         scenarioAssignmentService.createDefaultFireAssignmentsIfEmpty(scenario.getId(), saved.getId());
 
         prepareTeamsForTraining(scenario, saved.getId());
 
         linkFireTeamAssignments(scenario.getId());
+
+        resetStudentsForNewTrainingSession(saved);
 
         createOnStartTriggers(saved, scenario);
 
@@ -502,6 +506,145 @@ public class RoomService {
                 .trainingEndedAt(saved.getTrainingEndedAt())
                 .activeScenarioId(saved.getActiveScenario() != null ? saved.getActiveScenario().getId() : null)
                 .build();
+    }
+
+    private void resetStudentsForNewTrainingSession(ClassroomV4 classroom) {
+        if (classroom == null) {
+            return;
+        }
+
+        List<StudentV4> classroomStudents =
+                studentRepositoryV4.findByClassroom_IdOrderByJoinedAtAsc(classroom.getId());
+
+        if (classroomStudents == null || classroomStudents.isEmpty()) {
+            return;
+        }
+
+        Set<String> participantStudentIds = resolveCurrentTrainingParticipantIds(classroom);
+
+        for (StudentV4 student : classroomStudents) {
+            /*
+             * 이전 훈련 위치 정보 초기화
+             */
+            student.setLastBeacon(null);
+            student.setLastBeaconRssi(null);
+            student.setLastBeaconSeenAt(null);
+            student.setBeaconState(BeaconState.NONE);
+
+            /*
+             * 현재 훈련 참여자만 EVACUATING.
+             * 미참여자/퇴출자는 UNKNOWN.
+             */
+            if (!Boolean.TRUE.equals(student.getIsKicked())
+                    && participantStudentIds.contains(student.getId())) {
+                student.setStatus(StudentStatus.EVACUATING);
+            } else {
+                student.setStatus(StudentStatus.UNKNOWN);
+            }
+        }
+
+        studentRepositoryV4.saveAll(classroomStudents);
+    }
+
+    private Set<String> resolveCurrentTrainingParticipantIds(ClassroomV4 classroom) {
+        if (classroom == null || classroom.getActiveScenario() == null) {
+            return Set.of();
+        }
+
+        String scenarioId = classroom.getActiveScenario().getId();
+
+        Set<String> result = new LinkedHashSet<>();
+
+        for (ScenarioTeamMemberV4 member :
+                scenarioTeamMemberRepositoryV4.findByScenario_IdOrderByAssignedAtAsc(scenarioId)) {
+
+            StudentV4 student = member.getStudent();
+
+            if (student == null) {
+                continue;
+            }
+
+            if (student.getClassroom() == null
+                    || !classroom.getId().equals(student.getClassroom().getId())) {
+                continue;
+            }
+
+            if (Boolean.TRUE.equals(student.getIsKicked())) {
+                continue;
+            }
+
+            result.add(student.getId());
+        }
+
+        return result;
+    }
+
+    private List<StudentV4> findCurrentTrainingParticipants(ClassroomV4 classroom) {
+        if (classroom == null) {
+            return List.of();
+        }
+
+        if (classroom.getTrainingState() != TrainingState.RUNNING) {
+            return List.of();
+        }
+
+        if (classroom.getActiveScenario() == null) {
+            return List.of();
+        }
+
+        String scenarioId = classroom.getActiveScenario().getId();
+
+        Map<String, StudentV4> result = new LinkedHashMap<>();
+
+        for (ScenarioTeamMemberV4 member :
+                scenarioTeamMemberRepositoryV4.findByScenario_IdOrderByAssignedAtAsc(scenarioId)) {
+
+            StudentV4 student = member.getStudent();
+
+            if (student == null) {
+                continue;
+            }
+
+            if (student.getClassroom() == null
+                    || !classroom.getId().equals(student.getClassroom().getId())) {
+                continue;
+            }
+
+            if (Boolean.TRUE.equals(student.getIsKicked())) {
+                continue;
+            }
+
+            result.putIfAbsent(student.getId(), student);
+        }
+
+        return new ArrayList<>(result.values());
+    }
+
+    private boolean hasCurrentSessionDetection(
+            ClassroomV4 classroom,
+            StudentV4 student
+    ) {
+        if (classroom == null || student == null) {
+            return false;
+        }
+
+        if (classroom.getTrainingStartedAt() == null) {
+            return false;
+        }
+
+        if (student.getLastBeacon() == null) {
+            return false;
+        }
+
+        if (student.getLastBeaconSeenAt() == null) {
+            return false;
+        }
+
+        if (student.getBeaconState() != BeaconState.DETECTED) {
+            return false;
+        }
+
+        return !student.getLastBeaconSeenAt().isBefore(classroom.getTrainingStartedAt());
     }
 
     private void initializeActiveStudentStatusForTraining(String classroomId) {
@@ -561,11 +704,12 @@ public class RoomService {
         ClassroomV4 classroom = classroomRepository.findById(classroomId)
                 .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
 
-        return studentRepository.findByClassroom_IdOrderByJoinedAtAsc(classroom.getId())
-                .stream()
-                .map(student -> {
+        List<StudentV4> participants = findCurrentTrainingParticipants(classroom);
 
-                    BeaconV4 beacon = student.getLastBeacon(); // ⭐ 반드시 여기 있어야 함
+        return participants.stream()
+                .map(student -> {
+                    boolean currentDetected = hasCurrentSessionDetection(classroom, student);
+                    BeaconV4 beacon = currentDetected ? student.getLastBeacon() : null;
 
                     return StudentRoomResponse.builder()
                             .studentId(student.getId())
@@ -578,13 +722,12 @@ public class RoomService {
                             .x(beacon != null ? beacon.getX() : null)
                             .y(beacon != null ? beacon.getY() : null)
                             .beaconId(beacon != null ? beacon.getId() : null)
-                            .lastRssi(student.getLastBeaconRssi())
+                            .lastRssi(currentDetected ? student.getLastBeaconRssi() : null)
                             .lastSeenAt(
-                                    student.getLastBeaconSeenAt() != null
+                                    currentDetected && student.getLastBeaconSeenAt() != null
                                             ? student.getLastBeaconSeenAt().toString()
                                             : null
                             )
-
                             .build();
                 })
                 .toList();
@@ -1382,7 +1525,7 @@ public class RoomService {
             return;
         }
 
-        List<StudentV4> students = studentRepository.findByClassroom_IdOrderByJoinedAtAsc(classroom.getId());
+        List<StudentV4> students = findCurrentTrainingParticipants(classroom);
         if (students == null || students.isEmpty()) {
             return;
         }
@@ -2523,6 +2666,41 @@ public class RoomService {
                 .syncMappingsDeactivated(syncResult.mappingsDeactivated())
                 .syncUnmatchedBeacons(syncResult.unmatchedBeacons())
                 .build();
+    }
+
+    private void resetScenarioProgressForNewTraining(String scenarioId) {
+        if (scenarioId == null || scenarioId.isBlank()) {
+            return;
+        }
+
+        /*
+         * 방법 1:
+         * 같은 scenario를 새 훈련처럼 재사용하기 위해
+         * 이전 진행 상태/퀴즈 제출/트리거/이벤트/아이템을 초기화한다.
+         *
+         * scenario_teams, scenario_team_members, scenario_assignments는 지우지 않는다.
+         * 팀 배정/assignment 정의는 유지하고 진행 상태만 초기화한다.
+         */
+
+        scenarioTriggerRepositoryV4.deleteByScenario_Id(scenarioId);
+
+        studentMissionProgressRepository.deleteByScenario_Id(scenarioId);
+
+        teamMissionStepProgressRepositoryV4.deleteByScenario_Id(scenarioId);
+        teamMissionProgressRepositoryV4.deleteByScenario_Id(scenarioId);
+
+        quizSubmissionRepositoryV4.deleteByScenario_Id(scenarioId);
+        cardQuizSubmissionRepositoryV4.deleteByScenario_Id(scenarioId);
+
+        studentItemRepositoryV4.deleteByScenario_Id(scenarioId);
+
+        scenarioActionEventRepositoryV4.deleteByScenario_Id(scenarioId);
+
+        /*
+         * 선택:
+         * 훈련 시작 시 이전 평가 결과도 화면에 안 남기려면 삭제.
+         */
+        evaluationRepositoryV4.deleteByScenario_Id(scenarioId);
     }
 
 }

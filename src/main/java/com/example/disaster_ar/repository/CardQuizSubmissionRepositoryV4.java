@@ -13,4 +13,6 @@ public interface CardQuizSubmissionRepositoryV4 extends JpaRepository<CardQuizSu
             String studentId,
             CardQuizKind quizKind
     );
+
+    void deleteByScenario_Id(String scenarioId);
 }

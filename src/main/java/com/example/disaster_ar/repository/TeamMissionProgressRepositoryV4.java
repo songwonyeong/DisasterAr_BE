@@ -41,4 +41,6 @@ public interface TeamMissionProgressRepositoryV4 extends JpaRepository<TeamMissi
             ProgressStatus status
     );
 
+    void deleteByScenario_Id(String scenarioId);
+
 }

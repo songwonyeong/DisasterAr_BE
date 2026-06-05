@@ -47,5 +47,6 @@ public interface QuizSubmissionRepositoryV4 extends JpaRepository<QuizSubmission
             String studentId
     );
 
+    void deleteByScenario_Id(String scenarioId);
 
 }

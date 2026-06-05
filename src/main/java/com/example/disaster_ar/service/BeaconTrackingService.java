@@ -28,6 +28,8 @@ public class BeaconTrackingService {
     private final StudentMissionProgressRepositoryV4 studentMissionProgressRepository;
     private final ScenarioTriggerRepositoryV4 scenarioTriggerRepositoryV4;
     private final ScenarioActionEventRepositoryV4 scenarioActionEventRepositoryV4;
+    private final ScenarioTeamMemberRepositoryV4 scenarioTeamMemberRepositoryV4;
+    private static final int DEFAULT_UNMAPPED_THRESHOLD_RSSI = -85;
 
     @Transactional
     public void processScan(BeaconScanRequest req) {
@@ -44,11 +46,14 @@ public class BeaconTrackingService {
             throw new IllegalArgumentException("학생 교실에 학교 정보가 없습니다.");
         }
 
+        if (!isCurrentTrainingParticipant(classroom, student)) {
+            return;
+        }
+
         String schoolId = classroom.getSchool().getId();
 
         if (req.getScans() == null || req.getScans().isEmpty()) {
-            student.setBeaconState(BeaconState.LOST);
-            studentRepository.save(student);
+            markStudentLost(student);
             return;
         }
 
@@ -83,11 +88,9 @@ public class BeaconTrackingService {
                     .findByBeacon_IdAndActiveTrue(candidateBeacon.getId())
                     .orElse(null);
 
-            if (candidateMapping == null) {
-                continue;
-            }
-
-            int thresholdRssi = candidateMapping.getEffectiveThresholdRssi();
+            int thresholdRssi = candidateMapping != null
+                    ? candidateMapping.getEffectiveThresholdRssi()
+                    : DEFAULT_UNMAPPED_THRESHOLD_RSSI;
 
             /*
              * RSSI는 음수다.
@@ -106,13 +109,8 @@ public class BeaconTrackingService {
             }
         }
 
-        /*
-         * active mapping이 없거나 threshold를 통과한 비콘이 없으면 LOST 처리.
-         */
-        if (strongest == null || beacon == null || mapping == null) {
-            student.setBeaconState(BeaconState.LOST);
-            student.setLastBeaconSeenAt(LocalDateTime.now());
-            studentRepository.save(student);
+        if (strongest == null || beacon == null) {
+            markStudentLost(student);
             return;
         }
 
@@ -154,9 +152,14 @@ public class BeaconTrackingService {
         }
 
         /*
-         * triggerByBeacon / triggerByElement는 매번 호출해도 된다.
-         * 내부에서 이미 같은 assignment가 trigger됐는지 체크한다.
-         */
+        mapping이 없는 비콘은 mornitoring 표시용 위치 갱신까지만 수행한다.
+        게임 트리거/zone 판정은 active mapping이 있는 비콘만 사용한다.
+        */
+
+        if (mapping == null) {
+            return;
+        }
+
         scenarioTriggerService.triggerByBeacon(
                 scenario,
                 classroom,
@@ -170,6 +173,7 @@ public class BeaconTrackingService {
          * getEffectiveZoneElementId()는 zoneElementId가 있으면 zoneElementId,
          * 없으면 기존 elementId를 fallback으로 반환한다.
          */
+
         String zoneElementId = mapping.getEffectiveZoneElementId();
 
         if (zoneElementId == null || zoneElementId.isBlank()) {
@@ -194,6 +198,42 @@ public class BeaconTrackingService {
                 strongest.getRssi(),
                 mapping
         );
+    }
+
+    private boolean isCurrentTrainingParticipant(
+            ClassroomV4 classroom,
+            StudentV4 student
+    ) {
+        if (classroom == null || student == null) {
+            return false;
+        }
+
+        if (classroom.getTrainingState() != TrainingState.RUNNING) {
+            return false;
+        }
+
+        if (classroom.getActiveScenario() == null) {
+            return false;
+        }
+
+        if (Boolean.TRUE.equals(student.getIsKicked())) {
+            return false;
+        }
+
+        return scenarioTeamMemberRepositoryV4
+                .findByScenario_IdAndStudent_Id(
+                        classroom.getActiveScenario().getId(),
+                        student.getId()
+                )
+                .isPresent();
+    }
+
+    private void markStudentLost(StudentV4 student) {
+        student.setLastBeacon(null);
+        student.setLastBeaconRssi(null);
+        student.setLastBeaconSeenAt(LocalDateTime.now());
+        student.setBeaconState(BeaconState.LOST);
+        studentRepository.save(student);
     }
 
     private void updateStudentStatusByZoneMapping(

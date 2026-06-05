@@ -64,4 +64,6 @@ public interface ScenarioActionEventRepositoryV4 extends JpaRepository<ScenarioA
 
     boolean existsByBeacon_id(String beaconId);
     boolean existsByBeacon_Id(String beaconId);
+
+    void deleteByScenario_Id(String scenarioId);
 }

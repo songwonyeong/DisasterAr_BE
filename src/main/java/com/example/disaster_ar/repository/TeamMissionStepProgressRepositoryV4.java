@@ -22,4 +22,7 @@ public interface TeamMissionStepProgressRepositoryV4 extends JpaRepository<TeamM
             String assignmentId,
             String teamId
     );
+
+    void deleteByScenario_Id(String scenarioId);
+
 }
