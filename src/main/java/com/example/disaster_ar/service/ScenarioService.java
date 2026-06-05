@@ -316,30 +316,103 @@ public class ScenarioService {
         StudentV4 student = studentRepository.findById(req.getStudentId())
                 .orElseThrow(() -> new IllegalArgumentException("학생 없음"));
 
+        ScenarioAssignmentV4 assignment = scenarioAssignmentRepositoryV4.findById(assignmentId)
+                .orElseThrow(() -> new IllegalArgumentException("assignment 없음"));
+
+        if (assignment.getScenario() == null
+                || !assignment.getScenario().getId().equals(scenario.getId())) {
+            throw new IllegalArgumentException("해당 assignment는 이 시나리오 소속이 아닙니다.");
+        }
+
+        /*
+         * targetTeam이 있는 미션이면 해당 학생이 그 팀 소속인지 확인.
+         * 예: FIRETEAM_GET_EXTINGUISHER는 FIRE 팀 학생만 완료 가능.
+         */
+        if (assignment.getTargetTeam() != null) {
+            ScenarioTeamMemberV4 member = scenarioTeamMemberRepositoryV4
+                    .findByScenario_IdAndStudent_Id(
+                            scenario.getId(),
+                            student.getId()
+                    )
+                    .orElseThrow(() -> new IllegalArgumentException("학생 팀 배정 정보가 없습니다."));
+
+            if (member.getTeam() == null
+                    || !assignment.getTargetTeam().getId().equals(member.getTeam().getId())) {
+                throw new IllegalArgumentException("해당 학생은 이 팀 미션 대상자가 아닙니다.");
+            }
+        }
+
+        Optional<StudentMissionProgressV4> existingProgressOpt =
+                studentMissionProgressRepository
+                        .findByScenario_IdAndAssignment_IdAndStudent_Id(
+                                scenarioId,
+                                assignmentId,
+                                student.getId()
+                        );
+
+        boolean alreadyCompleted = existingProgressOpt
+                .map(progress -> progress.getStatus() == ProgressStatus.COMPLETED)
+                .orElse(false);
+
+        int requiredCount = getIntParam(
+                assignment.getParamsJson(),
+                "requiredCount",
+                1
+        );
+
+        /*
+         * 핵심:
+         * 기존 progress row가 없어도 새로 생성해서 COMPLETED 처리한다.
+         */
+        upsertStudentMissionProgress(
+                scenario,
+                assignment,
+                student,
+                requiredCount,
+                requiredCount,
+                ProgressStatus.COMPLETED
+        );
+
         StudentMissionProgressV4 progress = studentMissionProgressRepository
                 .findByScenario_IdAndAssignment_IdAndStudent_Id(
                         scenarioId,
                         assignmentId,
                         student.getId()
                 )
-                .orElseThrow(() -> new IllegalArgumentException("미션 진행 정보 없음"));
+                .orElseThrow(() -> new IllegalArgumentException("미션 진행 정보 저장 실패"));
 
-        if (progress.getStatus() != ProgressStatus.COMPLETED) {
-            progress.setStatus(ProgressStatus.COMPLETED);
-            progress.setCompletedAt(LocalDateTime.now());
-            progress.setProgressCount(progress.getRequiredCount());
-            studentMissionProgressRepository.save(progress);
-
+        /*
+         * 이미 완료된 미션을 다시 완료 호출했을 때 이벤트 중복 저장 방지.
+         */
+        if (!alreadyCompleted) {
             ScenarioActionEventV4 event = ScenarioActionEventV4.builder()
                     .id(UUID.randomUUID().toString())
                     .scenario(scenario)
                     .student(student)
                     .actionType(ScenarioActionType.MISSION_COMPLETE)
+                    .valueText(extractMissionCodeForScenarioService(
+                            assignment.getParamsJson(),
+                            assignment.getContent() != null ? assignment.getContent().getTitle() : null
+                    ))
                     .createdAt(LocalDateTime.now())
                     .build();
 
             scenarioActionEventRepositoryV4.save(event);
         }
+
+        /*
+         * 해당 학생에게 발급된 trigger가 있으면 완료 처리.
+         */
+        scenarioTriggerRepositoryV4
+                .findByScenario_IdAndStudent_IdAndAssignment_Id(
+                        scenarioId,
+                        student.getId(),
+                        assignmentId
+                )
+                .ifPresent(trigger -> {
+                    trigger.setStatus("COMPLETED");
+                    scenarioTriggerRepositoryV4.save(trigger);
+                });
 
         return MissionCompleteResponse.builder()
                 .scenarioId(scenario.getId())

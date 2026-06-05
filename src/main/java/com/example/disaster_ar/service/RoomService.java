@@ -495,6 +495,12 @@ public class RoomService {
 
         linkFireTeamAssignments(scenario.getId());
 
+        /*
+         * 같은 scenario를 새 훈련처럼 재사용할 때,
+         * 이전 미션 진행 상태/퀴즈/트리거/아이템/평가가 남지 않도록 초기화한다.
+         */
+        resetScenarioProgressForNewTraining(scenario.getId());
+
         resetStudentsForNewTrainingSession(saved);
 
         createOnStartTriggers(saved, scenario);
@@ -628,6 +634,14 @@ public class RoomService {
             return false;
         }
 
+        /*
+         * 훈련 중이 아닐 때는 위치 정보를 내려주지 않는다.
+         * 대기실/종료 상태에서는 학생 목록만 필요하다.
+         */
+        if (classroom.getTrainingState() != TrainingState.RUNNING) {
+            return false;
+        }
+
         if (classroom.getTrainingStartedAt() == null) {
             return false;
         }
@@ -704,33 +718,59 @@ public class RoomService {
         ClassroomV4 classroom = classroomRepository.findById(classroomId)
                 .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
 
-        List<StudentV4> participants = findCurrentTrainingParticipants(classroom);
+        List<StudentV4> students;
 
-        return participants.stream()
-                .map(student -> {
-                    boolean currentDetected = hasCurrentSessionDetection(classroom, student);
-                    BeaconV4 beacon = currentDetected ? student.getLastBeacon() : null;
+        if (classroom.getTrainingState() == TrainingState.RUNNING) {
+            /*
+             * 훈련 중:
+             * 현재 activeScenario의 scenario_team_members 기준 참여자만 반환
+             */
+            students = findCurrentTrainingParticipants(classroom);
+        } else {
+            /*
+             * 훈련 시작 전/종료 후:
+             * 대기실 학생 목록 용도.
+             * 아직 팀 배정 전이므로 classroom 기준 입장 학생을 반환한다.
+             */
+            students = studentRepositoryV4
+                    .findByClassroom_IdAndIsKickedFalseOrderByJoinedAtAsc(classroom.getId());
+        }
 
-                    return StudentRoomResponse.builder()
-                            .studentId(student.getId())
-                            .studentName(student.getStudentName())
-                            .joinedAt(student.getJoinedAt())
-                            .status(student.getStatus() != null ? student.getStatus().name() : null)
-                            .isKicked(Boolean.TRUE.equals(student.getIsKicked()))
-
-                            .floorIndex(beacon != null ? beacon.getFloorIndex() : null)
-                            .x(beacon != null ? beacon.getX() : null)
-                            .y(beacon != null ? beacon.getY() : null)
-                            .beaconId(beacon != null ? beacon.getId() : null)
-                            .lastRssi(currentDetected ? student.getLastBeaconRssi() : null)
-                            .lastSeenAt(
-                                    currentDetected && student.getLastBeaconSeenAt() != null
-                                            ? student.getLastBeaconSeenAt().toString()
-                                            : null
-                            )
-                            .build();
-                })
+        return students.stream()
+                .map(student -> toStudentRoomResponse(classroom, student))
                 .toList();
+    }
+
+    private StudentRoomResponse toStudentRoomResponse(
+            ClassroomV4 classroom,
+            StudentV4 student
+    ) {
+        boolean currentDetected = hasCurrentSessionDetection(classroom, student);
+        BeaconV4 beacon = currentDetected ? student.getLastBeacon() : null;
+
+        return StudentRoomResponse.builder()
+                .studentId(student.getId())
+                .studentName(student.getStudentName())
+                .joinedAt(student.getJoinedAt())
+                .status(student.getStatus() != null ? student.getStatus().name() : null)
+                .isKicked(Boolean.TRUE.equals(student.getIsKicked()))
+
+                /*
+                 * 위치 정보는 RUNNING 상태에서,
+                 * 현재 trainingStartedAt 이후 감지된 정보만 내려준다.
+                 * WAITING/ENDED에서는 과거 위치가 섞이지 않도록 null 처리된다.
+                 */
+                .floorIndex(beacon != null ? beacon.getFloorIndex() : null)
+                .x(beacon != null ? beacon.getX() : null)
+                .y(beacon != null ? beacon.getY() : null)
+                .beaconId(beacon != null ? beacon.getId() : null)
+                .lastRssi(currentDetected ? student.getLastBeaconRssi() : null)
+                .lastSeenAt(
+                        currentDetected && student.getLastBeaconSeenAt() != null
+                                ? student.getLastBeaconSeenAt().toString()
+                                : null
+                )
+                .build();
     }
 
     public StudentKickResponse kickStudent(String classroomId, String studentId) {
