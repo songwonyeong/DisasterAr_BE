@@ -89,6 +89,11 @@ public class MonitoringService {
         }
 
         String scenarioId = classroom.getActiveScenario().getId();
+        String trainingSessionId = classroom.getActiveTrainingSessionId();
+
+        if (trainingSessionId == null || trainingSessionId.isBlank()) {
+            return List.of();
+        }
 
         Map<String, StudentV4> result = new LinkedHashMap<>();
 
@@ -107,6 +112,10 @@ public class MonitoringService {
             }
 
             if (Boolean.TRUE.equals(student.getIsKicked())) {
+                continue;
+            }
+
+            if (!trainingSessionId.equals(student.getTrainingSessionId())) {
                 continue;
             }
 

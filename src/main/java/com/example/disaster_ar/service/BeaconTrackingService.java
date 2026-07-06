@@ -220,6 +220,15 @@ public class BeaconTrackingService {
             return false;
         }
 
+        String trainingSessionId = classroom.getActiveTrainingSessionId();
+        if (trainingSessionId == null || trainingSessionId.isBlank()) {
+            return false;
+        }
+
+        if (!trainingSessionId.equals(student.getTrainingSessionId())) {
+            return false;
+        }
+
         return scenarioTeamMemberRepositoryV4
                 .findByScenario_IdAndStudent_Id(
                         classroom.getActiveScenario().getId(),

@@ -3,6 +3,7 @@ package com.example.disaster_ar.service;
 import com.example.disaster_ar.config.TeamRatioConfig;
 import com.example.disaster_ar.domain.v4.ScenarioTeamV4;
 import com.example.disaster_ar.domain.v4.ScenarioV4;
+import com.example.disaster_ar.domain.v4.StudentV4;
 import com.example.disaster_ar.dto.scenario.TeamDistributionRequest;
 import com.example.disaster_ar.dto.scenario.TeamDistributionResponse;
 import com.example.disaster_ar.repository.*;
@@ -32,9 +33,9 @@ public class ScenarioTeamDistributionService {
         }
 
         String classroomId = scenario.getClassroom().getId();
+        String trainingSessionId = scenario.getClassroom().getActiveTrainingSessionId();
 
-        List<?> activeStudents = studentRepositoryV4
-                .findByClassroom_IdAndIsKickedFalseOrderByJoinedAtAsc(classroomId);
+        List<StudentV4> activeStudents = findStudentsForCurrentContext(classroomId, trainingSessionId);
 
         int totalStudents = activeStudents.size();
 
@@ -65,6 +66,21 @@ public class ScenarioTeamDistributionService {
                 .totalStudents(totalStudents)
                 .teams(results)
                 .build();
+    }
+
+    private List<StudentV4> findStudentsForCurrentContext(String classroomId, String trainingSessionId) {
+        if (trainingSessionId == null || trainingSessionId.isBlank()) {
+            return studentRepositoryV4
+                    .findByClassroom_IdAndIsKickedFalseAndTrainingSessionIdIsNullOrderByJoinedAtAsc(
+                            classroomId
+                    );
+        }
+
+        return studentRepositoryV4
+                .findByClassroom_IdAndIsKickedFalseAndTrainingSessionIdOrderByJoinedAtAsc(
+                        classroomId,
+                        trainingSessionId
+                );
     }
 
     private List<TeamDistributionResponse.TeamResult> distributeAuto(

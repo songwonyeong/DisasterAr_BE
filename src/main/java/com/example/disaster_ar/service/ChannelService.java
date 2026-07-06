@@ -2,6 +2,7 @@ package com.example.disaster_ar.service;
 
 import com.example.disaster_ar.domain.v4.*;
 import com.example.disaster_ar.domain.v4.enums.StudentStatus;
+import com.example.disaster_ar.domain.v4.enums.TrainingState;
 import com.example.disaster_ar.dto.channel.*;
 import com.example.disaster_ar.repository.*;
 import jakarta.transaction.Transactional;
@@ -199,6 +200,10 @@ public class ChannelService {
         ClassroomV4 classroom = classroomRepository.findByJoinCode(req.getJoinCode())
                 .orElseThrow(() -> new IllegalArgumentException("유효하지 않은 방 입장 코드입니다."));
 
+        if (classroom.getTrainingState() == TrainingState.RUNNING) {
+            throw new IllegalStateException("훈련 중에는 새로 입장할 수 없습니다. 훈련 종료 후 다시 입장해 주세요.");
+        }
+
         StudentV4 student = StudentV4.builder()
                 .id(UUID.randomUUID().toString())
                 .classroom(classroom)
@@ -206,6 +211,7 @@ public class ChannelService {
                 .joinedAt(LocalDateTime.now())
                 .status(StudentStatus.UNKNOWN)
                 .isKicked(false)
+                .trainingSessionId(null)
                 .build();
 
         studentRepository.save(student);

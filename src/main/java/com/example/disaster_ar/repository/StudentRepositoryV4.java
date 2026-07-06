@@ -12,6 +12,13 @@ public interface StudentRepositoryV4 extends JpaRepository<StudentV4, String> {
 
     List<StudentV4> findByClassroom_IdAndIsKickedFalseOrderByJoinedAtAsc(String classroomId);
 
+    List<StudentV4> findByClassroom_IdAndIsKickedFalseAndTrainingSessionIdIsNullOrderByJoinedAtAsc(String classroomId);
+
+    List<StudentV4> findByClassroom_IdAndIsKickedFalseAndTrainingSessionIdOrderByJoinedAtAsc(
+            String classroomId,
+            String trainingSessionId
+    );
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
     update StudentV4 s

@@ -6,8 +6,6 @@ import java.time.LocalDateTime;
 import jakarta.persistence.*;
 import lombok.*;
 
-import java.time.LocalDateTime;
-
 @Entity
 @Table(name = "students")
 @Getter @Setter
@@ -47,6 +45,13 @@ public class StudentV4 {
     @Builder.Default
     @Column(name = "is_kicked", nullable = false)
     private Boolean isKicked = false;
+
+    /**
+     * 이 학생 row가 어느 훈련 회차에 참여했는지 저장한다.
+     * null이면 아직 훈련 시작 전 대기실 학생이다.
+     */
+    @Column(name = "training_session_id", length = 36)
+    private String trainingSessionId;
 
     @Column(name = "joined_at", nullable = false)
     private LocalDateTime joinedAt;

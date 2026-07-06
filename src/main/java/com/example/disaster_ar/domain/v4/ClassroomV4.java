@@ -52,6 +52,13 @@ public class ClassroomV4 extends BaseTimeEntity {
     @Column(name = "training_ended_at")
     private LocalDateTime trainingEndedAt;
 
+    /**
+     * 현재 방에서 마지막으로 시작한 훈련 회차 ID.
+     * 같은 방을 여러 번 재사용할 때 이전 훈련 학생이 현재 훈련에 섞이지 않도록 사용한다.
+     */
+    @Column(name = "active_training_session_id", length = 36)
+    private String activeTrainingSessionId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "active_scenario_id")
     private ScenarioV4 activeScenario;

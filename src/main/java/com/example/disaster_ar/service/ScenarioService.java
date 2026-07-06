@@ -793,22 +793,33 @@ public class ScenarioService {
          */
         evaluationRepositoryV4.deleteByScenario_Id(scenarioId);
 
-        List<StudentV4> students = studentRepository.findByClassroom_IdOrderByJoinedAtAsc(
-                scenario.getClassroom().getId()
-        );
+        if (scenario.getClassroom() == null) {
+            throw new IllegalStateException("시나리오에 연결된 교실이 없습니다.");
+        }
 
-        Map<String, ScenarioTeamMemberV4> teamMemberByStudentId = new HashMap<>();
+        String trainingSessionId = scenario.getClassroom().getActiveTrainingSessionId();
+        if (trainingSessionId == null || trainingSessionId.isBlank()) {
+            throw new IllegalStateException("평가할 훈련 회차가 없습니다.");
+        }
+
+        Map<String, ScenarioTeamMemberV4> teamMemberByStudentId = new LinkedHashMap<>();
+        Map<String, StudentV4> studentById = new LinkedHashMap<>();
 
         for (ScenarioTeamMemberV4 member : scenarioTeamMemberRepositoryV4.findByScenario_IdOrderByAssignedAtAsc(scenarioId)) {
-            if (member.getStudent() == null) {
+            StudentV4 student = member.getStudent();
+            if (student == null) {
                 continue;
             }
 
-            teamMemberByStudentId.putIfAbsent(
-                    member.getStudent().getId(),
-                    member
-            );
+            if (!trainingSessionId.equals(student.getTrainingSessionId())) {
+                continue;
+            }
+
+            teamMemberByStudentId.putIfAbsent(student.getId(), member);
+            studentById.putIfAbsent(student.getId(), student);
         }
+
+        List<StudentV4> students = new ArrayList<>(studentById.values());
 
         List<ScenarioEvaluateResponse.StudentEvaluationItem> studentResults = new ArrayList<>();
 
@@ -1006,14 +1017,24 @@ public class ScenarioService {
          * studentId -> ScenarioTeamMemberV4 맵을 만든다.
          */
         Map<String, ScenarioTeamMemberV4> teamMemberByStudentId = new HashMap<>();
+        String trainingSessionId = scenario.getClassroom() != null
+                ? scenario.getClassroom().getActiveTrainingSessionId()
+                : null;
 
         for (ScenarioTeamMemberV4 member : scenarioTeamMemberRepositoryV4.findByScenario_IdOrderByAssignedAtAsc(scenarioId)) {
-            if (member.getStudent() == null) {
+            StudentV4 student = member.getStudent();
+            if (student == null) {
+                continue;
+            }
+
+            if (trainingSessionId != null
+                    && !trainingSessionId.isBlank()
+                    && !trainingSessionId.equals(student.getTrainingSessionId())) {
                 continue;
             }
 
             teamMemberByStudentId.putIfAbsent(
-                    member.getStudent().getId(),
+                    student.getId(),
                     member
             );
         }

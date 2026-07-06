@@ -99,6 +99,7 @@ public class RoomService {
         c.setTrainingStartedAt(null);
         c.setTrainingEndedAt(null);
         c.setActiveScenario(null);
+        c.setActiveTrainingSessionId(null);
 
         classroomRepository.save(c);
         return toDto(c);
@@ -462,6 +463,10 @@ public class RoomService {
         ClassroomV4 classroom = classroomRepository.findById(classroomId)
                 .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
 
+        if (classroom.getTrainingState() == TrainingState.RUNNING) {
+            throw new IllegalStateException("이미 훈련이 진행 중입니다.");
+        }
+
         ScenarioV4 scenario = scenarioRepository.findById(req.getScenarioId())
                 .orElseThrow(() -> new IllegalArgumentException("시나리오가 존재하지 않습니다."));
 
@@ -469,8 +474,19 @@ public class RoomService {
             throw new IllegalArgumentException("해당 시나리오는 이 교실 소속이 아닙니다.");
         }
 
+        List<StudentV4> trainingStudents =
+                studentRepositoryV4.findByClassroom_IdAndIsKickedFalseAndTrainingSessionIdIsNullOrderByJoinedAtAsc(
+                        classroomId
+                );
+
+        if (trainingStudents == null || trainingStudents.isEmpty()) {
+            throw new IllegalStateException("이번 훈련에 참여할 대기 학생이 없습니다. 학생을 새로 입장시킨 뒤 시작하세요.");
+        }
+
+        String trainingSessionId = UUID.randomUUID().toString();
+        LocalDateTime trainingStartedAt = LocalDateTime.now();
+
         /*
-         * 2차:
          * 훈련 시작 직전에 현재 활성 구조도 기준으로 비콘-구역 매핑을 최신화한다.
          * RUNNING 전환 전에 실행해야 한다.
          */
@@ -481,25 +497,35 @@ public class RoomService {
         scenarioRepository.save(scenario);
 
         classroom.setTrainingState(TrainingState.RUNNING);
-
-        classroom.setTrainingStartedAt(LocalDateTime.now());
+        classroom.setTrainingStartedAt(trainingStartedAt);
         classroom.setTrainingEndedAt(null);
         classroom.setActiveScenario(scenario);
-        classroom.setUpdatedAt(LocalDateTime.now());
+        classroom.setActiveTrainingSessionId(trainingSessionId);
+        classroom.setUpdatedAt(trainingStartedAt);
 
         ClassroomV4 saved = classroomRepository.save(classroom);
 
+        for (StudentV4 student : trainingStudents) {
+            student.setTrainingSessionId(trainingSessionId);
+            student.setStatus(StudentStatus.EVACUATING);
+            student.setLastBeacon(null);
+            student.setLastBeaconRssi(null);
+            student.setLastBeaconSeenAt(null);
+            student.setBeaconState(BeaconState.NONE);
+        }
+        studentRepositoryV4.saveAll(trainingStudents);
+
         scenarioAssignmentService.createDefaultFireAssignmentsIfEmpty(scenario.getId(), saved.getId());
-
-        prepareTeamsForTraining(scenario, saved.getId());
-
-        linkFireTeamAssignments(scenario.getId());
 
         /*
          * 같은 scenario를 새 훈련처럼 재사용할 때,
          * 이전 미션 진행 상태/퀴즈/트리거/아이템/평가가 남지 않도록 초기화한다.
          */
         resetScenarioProgressForNewTraining(scenario.getId());
+
+        prepareTeamsForTraining(scenario, saved.getId(), trainingSessionId);
+
+        linkFireTeamAssignments(scenario.getId());
 
         resetStudentsForNewTrainingSession(saved);
 
@@ -511,6 +537,7 @@ public class RoomService {
                 .trainingStartedAt(saved.getTrainingStartedAt())
                 .trainingEndedAt(saved.getTrainingEndedAt())
                 .activeScenarioId(saved.getActiveScenario() != null ? saved.getActiveScenario().getId() : null)
+                .activeTrainingSessionId(saved.getActiveTrainingSessionId())
                 .build();
     }
 
@@ -558,6 +585,11 @@ public class RoomService {
         }
 
         String scenarioId = classroom.getActiveScenario().getId();
+        String trainingSessionId = classroom.getActiveTrainingSessionId();
+
+        if (trainingSessionId == null || trainingSessionId.isBlank()) {
+            return Set.of();
+        }
 
         Set<String> result = new LinkedHashSet<>();
 
@@ -576,6 +608,10 @@ public class RoomService {
             }
 
             if (Boolean.TRUE.equals(student.getIsKicked())) {
+                continue;
+            }
+
+            if (!trainingSessionId.equals(student.getTrainingSessionId())) {
                 continue;
             }
 
@@ -599,6 +635,11 @@ public class RoomService {
         }
 
         String scenarioId = classroom.getActiveScenario().getId();
+        String trainingSessionId = classroom.getActiveTrainingSessionId();
+
+        if (trainingSessionId == null || trainingSessionId.isBlank()) {
+            return List.of();
+        }
 
         Map<String, StudentV4> result = new LinkedHashMap<>();
 
@@ -617,6 +658,10 @@ public class RoomService {
             }
 
             if (Boolean.TRUE.equals(student.getIsKicked())) {
+                continue;
+            }
+
+            if (!trainingSessionId.equals(student.getTrainingSessionId())) {
                 continue;
             }
 
@@ -642,6 +687,15 @@ public class RoomService {
             return false;
         }
 
+        String trainingSessionId = classroom.getActiveTrainingSessionId();
+        if (trainingSessionId == null || trainingSessionId.isBlank()) {
+            return false;
+        }
+
+        if (!trainingSessionId.equals(student.getTrainingSessionId())) {
+            return false;
+        }
+
         if (classroom.getTrainingStartedAt() == null) {
             return false;
         }
@@ -662,8 +716,19 @@ public class RoomService {
     }
 
     private void initializeActiveStudentStatusForTraining(String classroomId) {
+        ClassroomV4 classroom = classroomRepository.findById(classroomId)
+                .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
+
+        String trainingSessionId = classroom.getActiveTrainingSessionId();
+        if (trainingSessionId == null || trainingSessionId.isBlank()) {
+            return;
+        }
+
         List<StudentV4> activeStudents =
-                studentRepositoryV4.findByClassroom_IdAndIsKickedFalseOrderByJoinedAtAsc(classroomId);
+                studentRepositoryV4.findByClassroom_IdAndIsKickedFalseAndTrainingSessionIdOrderByJoinedAtAsc(
+                        classroomId,
+                        trainingSessionId
+                );
 
         if (activeStudents == null || activeStudents.isEmpty()) {
             return;
@@ -711,6 +776,7 @@ public class RoomService {
                 .trainingStartedAt(saved.getTrainingStartedAt())
                 .trainingEndedAt(saved.getTrainingEndedAt())
                 .activeScenarioId(saved.getActiveScenario() != null ? saved.getActiveScenario().getId() : null)
+                .activeTrainingSessionId(saved.getActiveTrainingSessionId())
                 .build();
     }
 
@@ -733,7 +799,9 @@ public class RoomService {
              * 아직 팀 배정 전이므로 classroom 기준 입장 학생을 반환한다.
              */
             students = studentRepositoryV4
-                    .findByClassroom_IdAndIsKickedFalseOrderByJoinedAtAsc(classroom.getId());
+                    .findByClassroom_IdAndIsKickedFalseAndTrainingSessionIdIsNullOrderByJoinedAtAsc(
+                            classroom.getId()
+                    );
         }
 
         return students.stream()
@@ -1685,6 +1753,13 @@ public class RoomService {
             return List.of();
         }
 
+        String trainingSessionId = classroom.getActiveTrainingSessionId();
+        if (trainingSessionId == null
+                || trainingSessionId.isBlank()
+                || !trainingSessionId.equals(student.getTrainingSessionId())) {
+            return List.of();
+        }
+
         // active-assignments 조회 시점 보정
         scenarioAssignmentService.createDefaultFireAssignmentsIfEmpty(
                 scenario.getId(),
@@ -1693,7 +1768,8 @@ public class RoomService {
 
         assignTeamsIfEmpty(
                 scenario.getId(),
-                classroom.getId()
+                classroom.getId(),
+                classroom.getActiveTrainingSessionId()
         );
 
         linkFireTeamAssignments(
@@ -2195,25 +2271,30 @@ public class RoomService {
     }
 
     @Transactional
-    public void assignTeamsIfEmpty(String scenarioId, String classroomId) {
-
-        // 이미 학생 팀 배정이 있으면 패스
-        if (scenarioTeamMemberRepositoryV4.existsByScenario_Id(scenarioId)) {
-            return;
-        }
+    public void assignTeamsIfEmpty(String scenarioId, String classroomId, String trainingSessionId) {
 
         ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
                 .orElseThrow(() -> new IllegalArgumentException("시나리오가 존재하지 않습니다."));
 
         List<StudentV4> students = new ArrayList<>(
-                studentRepositoryV4.findByClassroom_IdOrderByJoinedAtAsc(classroomId)
-                        .stream()
-                        .filter(s -> !Boolean.TRUE.equals(s.getIsKicked()))
-                        .toList()
+                findStudentsForTeamAssignment(classroomId, trainingSessionId)
         );
 
         if (students.isEmpty()) {
-            System.out.println("⚠ 학생 없음 → 팀 배정 스킵");
+            System.out.println("⚠ 현재 훈련 학생 없음 → 팀 배정 스킵");
+            return;
+        }
+
+        boolean hasCurrentSessionMembers = scenarioTeamMemberRepositoryV4
+                .findByScenario_IdOrderByAssignedAtAsc(scenarioId)
+                .stream()
+                .map(ScenarioTeamMemberV4::getStudent)
+                .filter(Objects::nonNull)
+                .anyMatch(student -> trainingSessionId != null
+                        && trainingSessionId.equals(student.getTrainingSessionId()));
+
+        // 이미 이번 훈련 회차 학생 팀 배정이 있으면 패스
+        if (hasCurrentSessionMembers) {
             return;
         }
 
@@ -2249,7 +2330,7 @@ public class RoomService {
 
         if (totalMax != students.size()) {
             throw new IllegalArgumentException(
-                    "팀별 maxMembers 합계와 학생 수가 일치하지 않습니다. maxMembers="
+                    "팀별 maxMembers 합계와 현재 훈련 학생 수가 일치하지 않습니다. maxMembers="
                             + totalMax + ", students=" + students.size()
             );
         }
@@ -2271,12 +2352,26 @@ public class RoomService {
         System.out.println("🔥 팀 배정 완료: " + members.size() + "명");
     }
 
-    private void prepareTeamsForTraining(ScenarioV4 scenario, String classroomId) {
-        List<StudentV4> activeStudents =
-                studentRepositoryV4.findByClassroom_IdAndIsKickedFalseOrderByJoinedAtAsc(classroomId);
+    private List<StudentV4> findStudentsForTeamAssignment(String classroomId, String trainingSessionId) {
+        if (trainingSessionId == null || trainingSessionId.isBlank()) {
+            return studentRepositoryV4
+                    .findByClassroom_IdAndIsKickedFalseAndTrainingSessionIdIsNullOrderByJoinedAtAsc(
+                            classroomId
+                    );
+        }
+
+        return studentRepositoryV4
+                .findByClassroom_IdAndIsKickedFalseAndTrainingSessionIdOrderByJoinedAtAsc(
+                        classroomId,
+                        trainingSessionId
+                );
+    }
+
+    private void prepareTeamsForTraining(ScenarioV4 scenario, String classroomId, String trainingSessionId) {
+        List<StudentV4> activeStudents = findStudentsForTeamAssignment(classroomId, trainingSessionId);
 
         if (activeStudents == null || activeStudents.isEmpty()) {
-            System.out.println("⚠ 활성 학생 없음 → 팀 배정 스킵");
+            System.out.println("⚠ 현재 훈련 학생 없음 → 팀 배정 스킵");
             return;
         }
 
@@ -2284,12 +2379,7 @@ public class RoomService {
 
         /*
          * AUTO 모드에서는 기존 scenario_team_members가 있더라도
-         * 현재 활성 학생 기준으로 팀 정원 재계산 + 재배정을 강제한다.
-         *
-         * 이유:
-         * - 강퇴/재입장 학생 때문에 기존 team_members가 남아 있을 수 있음
-         * - 기존 배정이 있으면 assignTeamsIfEmpty()가 스킵되어
-         *   4명이 전부 시민팀처럼 보이는 문제가 생김
+         * 현재 훈련 회차 학생 기준으로 팀 정원 재계산 + 재배정을 강제한다.
          */
         if (teamMode == null || teamMode == TeamMode.AUTO) {
             scenarioTeamDistributionService.distributeTeams(
@@ -2304,12 +2394,9 @@ public class RoomService {
         }
 
         /*
-         * MANUAL 모드는 기존 배정을 유지한다.
-         * 단, 아직 배정이 전혀 없으면 기존 fallback 로직으로 한 번 배정한다.
+         * MANUAL 모드는 팀 정원은 유지하되, 이번 훈련 회차 학생 배정이 없으면 한 번 배정한다.
          */
-        if (!scenarioTeamMemberRepositoryV4.existsByScenario_Id(scenario.getId())) {
-            assignTeamsIfEmpty(scenario.getId(), classroomId);
-        }
+        assignTeamsIfEmpty(scenario.getId(), classroomId, trainingSessionId);
     }
 
     private ScenarioTeamV4 findOrCreateTeamWithMaxMembers(

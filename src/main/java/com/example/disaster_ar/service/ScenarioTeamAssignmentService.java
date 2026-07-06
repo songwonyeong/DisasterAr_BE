@@ -26,6 +26,21 @@ public class ScenarioTeamAssignmentService {
     private final ScenarioTeamMemberRepositoryV4 scenarioTeamMemberRepositoryV4;
     private final StudentRepositoryV4 studentRepositoryV4;
 
+    private List<StudentV4> findStudentsForCurrentContext(String classroomId, String trainingSessionId) {
+        if (trainingSessionId == null || trainingSessionId.isBlank()) {
+            return studentRepositoryV4
+                    .findByClassroom_IdAndIsKickedFalseAndTrainingSessionIdIsNullOrderByJoinedAtAsc(
+                            classroomId
+                    );
+        }
+
+        return studentRepositoryV4
+                .findByClassroom_IdAndIsKickedFalseAndTrainingSessionIdOrderByJoinedAtAsc(
+                        classroomId,
+                        trainingSessionId
+                );
+    }
+
     @Transactional
     public TeamAssignmentResponse assignStudents(String scenarioId) {
         ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
@@ -36,9 +51,10 @@ public class ScenarioTeamAssignmentService {
         }
 
         String classroomId = scenario.getClassroom().getId();
+        String trainingSessionId = scenario.getClassroom().getActiveTrainingSessionId();
 
         List<StudentV4> students = new ArrayList<>(
-                studentRepositoryV4.findByClassroom_IdAndIsKickedFalseOrderByJoinedAtAsc(classroomId)
+                findStudentsForCurrentContext(classroomId, trainingSessionId)
         );
 
         if (students.isEmpty()) {

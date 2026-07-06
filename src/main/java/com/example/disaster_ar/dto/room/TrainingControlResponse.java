@@ -19,4 +19,5 @@ public class TrainingControlResponse {
     private LocalDateTime trainingStartedAt;
     private LocalDateTime trainingEndedAt;
     private String activeScenarioId;
+    private String activeTrainingSessionId;
 }
