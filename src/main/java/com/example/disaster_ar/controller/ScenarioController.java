@@ -4,6 +4,7 @@ import com.example.disaster_ar.dto.scenario.*;
 import com.example.disaster_ar.service.ScenarioService;
 import com.example.disaster_ar.service.ScenarioTeamAssignmentService;
 import com.example.disaster_ar.service.ScenarioTeamDistributionService;
+import com.example.disaster_ar.service.StudentCallMissionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -34,6 +35,7 @@ public class ScenarioController {
     private final ScenarioAdminService scenarioAdminService;
     private final ScenarioTeamDistributionService scenarioTeamDistributionService;
     private final ScenarioTeamAssignmentService scenarioTeamAssignmentService;
+    private final StudentCallMissionService studentCallMissionService;
 
     // ✅ 시나리오 생성
     @Operation(summary = "시나리오 생성")
@@ -81,6 +83,61 @@ public class ScenarioController {
     ) {
         scenarioService.endCallMission(scenarioId, req);
         return ResponseEntity.ok().build();
+    }
+
+    @Operation(summary = "학생별 전화 미션 상태 조회")
+    @GetMapping("/{scenarioId}/students/{studentId}/call-mission")
+    public ResponseEntity<StudentCallMissionResponse> getStudentCallMission(
+            @PathVariable String scenarioId,
+            @PathVariable String studentId
+    ) {
+        return ResponseEntity.ok(
+                studentCallMissionService.getStudentCallMission(scenarioId, studentId)
+        );
+    }
+
+    @Operation(summary = "학생별 전화 미션 시작 - 시간이 됐는지 확인하고 전화/퀴즈 분기")
+    @PostMapping("/{scenarioId}/students/{studentId}/call-mission/start")
+    public ResponseEntity<CallMissionStartResponse> startStudentCallMission(
+            @PathVariable String scenarioId,
+            @PathVariable String studentId
+    ) {
+        return ResponseEntity.ok(
+                studentCallMissionService.startStudentCallMission(scenarioId, studentId)
+        );
+    }
+
+    @Operation(summary = "학생별 전화 미션 통화 완료 처리 - 교사 판정 대기")
+    @PostMapping("/{scenarioId}/students/{studentId}/call-mission/complete")
+    public ResponseEntity<StudentCallMissionResponse> completeStudentCallMission(
+            @PathVariable String scenarioId,
+            @PathVariable String studentId
+    ) {
+        return ResponseEntity.ok(
+                studentCallMissionService.completeStudentCallMission(scenarioId, studentId)
+        );
+    }
+
+    @Operation(summary = "교사용 전화 미션 전체 현황 조회")
+    @GetMapping("/{scenarioId}/call-missions")
+    public ResponseEntity<CallMissionListResponse> getCallMissions(
+            @PathVariable String scenarioId
+    ) {
+        return ResponseEntity.ok(
+                studentCallMissionService.listCallMissions(scenarioId)
+        );
+    }
+
+    @Operation(summary = "교사용 전화 미션 성공/실패 판정")
+    @PostMapping("/{scenarioId}/students/{studentId}/call-mission/judge")
+    public ResponseEntity<StudentCallMissionResponse> judgeStudentCallMission(
+            @PathVariable String scenarioId,
+            @PathVariable String studentId,
+            @RequestBody CallMissionJudgeRequest req
+    ) {
+        return ResponseEntity.ok(
+                studentCallMissionService.judgeCallMission(scenarioId, studentId, req)
+        );
     }
 
     @Operation(summary = "[26.04.08] 비콘 감지 시뮬레이션(테스트/관리자용)")

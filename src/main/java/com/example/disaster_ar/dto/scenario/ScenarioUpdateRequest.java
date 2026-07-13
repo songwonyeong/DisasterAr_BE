@@ -24,4 +24,8 @@ public class ScenarioUpdateRequest {
     private String npcPositions;
 
     private Integer participantCount;
+
+    // 선생님 전화 미션 옵션
+    private Boolean teacherCallEnabled;
+    private String teacherPhoneNumber;
 }

@@ -14,4 +14,5 @@ public interface ScenarioTeamRepositoryV4 extends JpaRepository<ScenarioTeamV4, 
 
     boolean existsByScenario_Id(String scenarioId);
 
+    void deleteByScenario_Id(String scenarioId);
 }

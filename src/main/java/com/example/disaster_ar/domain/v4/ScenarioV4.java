@@ -85,4 +85,11 @@ public class ScenarioV4 {
 
     @Column(name = "npc_positions", columnDefinition = "json")
     private String npcPositionsJson;
+
+    @Builder.Default
+    @Column(name = "teacher_call_enabled", nullable = false)
+    private Boolean teacherCallEnabled = false;
+
+    @Column(name = "teacher_phone_number", length = 30)
+    private String teacherPhoneNumber;
 }

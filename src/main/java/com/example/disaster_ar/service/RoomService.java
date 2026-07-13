@@ -74,6 +74,7 @@ public class RoomService {
     private final QuizSubmissionRepositoryV4 quizSubmissionRepositoryV4;
     private final CardQuizSubmissionRepositoryV4 cardQuizSubmissionRepositoryV4;
     private final EvaluationRepositoryV4 evaluationRepositoryV4;
+    private final StudentCallMissionService studentCallMissionService;
 
 
     public RoomResponse createRoom(RoomCreateRequest req) {
@@ -526,6 +527,8 @@ public class RoomService {
         prepareTeamsForTraining(scenario, saved.getId(), trainingSessionId);
 
         linkFireTeamAssignments(scenario.getId());
+
+        studentCallMissionService.createSchedulesForTraining(scenario, saved, trainingStudents);
 
         resetStudentsForNewTrainingSession(saved);
 
@@ -2822,6 +2825,8 @@ public class RoomService {
         studentItemRepositoryV4.deleteByScenario_Id(scenarioId);
 
         scenarioActionEventRepositoryV4.deleteByScenario_Id(scenarioId);
+
+        studentCallMissionService.deleteByScenarioId(scenarioId);
 
         /*
          * 선택:

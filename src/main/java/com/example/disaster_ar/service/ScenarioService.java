@@ -43,7 +43,7 @@ public class ScenarioService {
     private final BeaconElementMapRepositoryV4 beaconElementMapRepositoryV4;
     private final EvaluationScoreService evaluationScoreService;
     private final ObjectMapper objectMapper;
-
+    private final StudentCallMissionRepositoryV4 studentCallMissionRepositoryV4;
 
     public ScenarioResponse create(ScenarioCreateRequest req) {
         ClassroomV4 classroom = classroomRepository.findById(req.getClassroomId())
@@ -72,6 +72,9 @@ public class ScenarioService {
         s.setTeamAssignmentJson(req.getTeamAssignment());
         s.setNpcPositionsJson(req.getNpcPositions());
         s.setParticipantCount(req.getParticipantCount());
+        s.setTeacherCallEnabled(Boolean.TRUE.equals(req.getTeacherCallEnabled()));
+        s.setTeacherPhoneNumber(normalizePhoneNumber(req.getTeacherPhoneNumber()));
+        validateTeacherCallOption(s.getTeacherCallEnabled(), s.getTeacherPhoneNumber());
         s.setCreatedTime(LocalDateTime.now());
 
         scenarioRepository.save(s);
@@ -102,6 +105,9 @@ public class ScenarioService {
         if (req.getTeamAssignment() != null) s.setTeamAssignmentJson(req.getTeamAssignment());
         if (req.getNpcPositions() != null) s.setNpcPositionsJson(req.getNpcPositions());
         if (req.getParticipantCount() != null) s.setParticipantCount(req.getParticipantCount());
+        if (req.getTeacherCallEnabled() != null) s.setTeacherCallEnabled(req.getTeacherCallEnabled());
+        if (req.getTeacherPhoneNumber() != null) s.setTeacherPhoneNumber(normalizePhoneNumber(req.getTeacherPhoneNumber()));
+        validateTeacherCallOption(s.getTeacherCallEnabled(), s.getTeacherPhoneNumber());
 
         scenarioRepository.save(s);
         return toDto(s);
@@ -129,8 +135,24 @@ public class ScenarioService {
         r.setTeamAssignmentJson(s.getTeamAssignmentJson());
         r.setNpcPositionsJson(s.getNpcPositionsJson());
         r.setParticipantCount(s.getParticipantCount());
+        r.setTeacherCallEnabled(Boolean.TRUE.equals(s.getTeacherCallEnabled()));
+        r.setTeacherPhoneNumber(s.getTeacherPhoneNumber());
         r.setCreatedTime(s.getCreatedTime());
         return r;
+    }
+
+    private void validateTeacherCallOption(Boolean enabled, String phoneNumber) {
+        if (Boolean.TRUE.equals(enabled) && (phoneNumber == null || phoneNumber.isBlank())) {
+            throw new IllegalArgumentException("선생님 전화 받기가 ON이면 전화번호가 필요합니다.");
+        }
+    }
+
+    private String normalizePhoneNumber(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String normalized = raw.replaceAll("[^0-9+]", "");
+        return normalized.isBlank() ? null : normalized;
     }
 
     private static <E extends Enum<E>> E parseEnum(Class<E> type, String raw, String fieldName) {
@@ -1335,8 +1357,25 @@ public class ScenarioService {
         ScenarioV4 scenario = scenarioRepository.findById(scenarioId)
                 .orElseThrow(() -> new IllegalArgumentException("시나리오 없음"));
 
-        // ⭐ 이거 핵심
         classroomRepository.clearActiveScenarioByScenarioId(scenarioId);
+
+        studentCallMissionRepositoryV4.deleteByScenario_Id(scenarioId);
+        evaluationRepositoryV4.deleteByScenario_Id(scenarioId);
+        scenarioActionEventRepositoryV4.deleteByScenario_Id(scenarioId);
+        studentMissionProgressRepository.deleteByScenario_Id(scenarioId);
+        teamMissionStepProgressRepositoryV4.deleteByScenario_Id(scenarioId);
+        teamMissionProgressRepositoryV4.deleteByScenario_Id(scenarioId);
+        quizSubmissionRepositoryV4.deleteByScenario_Id(scenarioId);
+        cardQuizSubmissionRepositoryV4.deleteByScenario_Id(scenarioId);
+        scenarioTriggerRepositoryV4.deleteByScenario_Id(scenarioId);
+
+        // 팀 멤버가 팀을 참조하므로 멤버 먼저
+        scenarioTeamMemberRepositoryV4.deleteByScenario_Id(scenarioId);
+
+        // assignment가 team/content 등을 물고 있어서 trigger/progress 삭제 후 삭제
+        scenarioAssignmentRepositoryV4.deleteByScenario_Id(scenarioId);
+
+        scenarioTeamRepositoryV4.deleteByScenario_Id(scenarioId);
 
         scenarioRepository.delete(scenario);
     }
@@ -1640,7 +1679,7 @@ public class ScenarioService {
         int progressCount = isCorrect ? 1 : 0;
         ProgressStatus progressStatus = isCorrect
                 ? ProgressStatus.COMPLETED
-                : ProgressStatus.IN_PROGRESS;
+                : ProgressStatus.FAILED;
 
         upsertStudentMissionProgress(
                 scenario,
@@ -1675,6 +1714,13 @@ public class ScenarioService {
                     });
         }
 
+        syncStudentCallMissionAfterQuizSubmit(
+                scenario,
+                student,
+                isCorrect,
+                now
+        );
+
         return CallSubmitResponse.builder()
                 .scenarioId(scenario.getId())
                 .assignmentId(assignment.getId())
@@ -1688,6 +1734,41 @@ public class ScenarioService {
                 .status(progressStatus.name())
                 .submittedAt(now)
                 .build();
+    }
+
+    private void syncStudentCallMissionAfterQuizSubmit(
+            ScenarioV4 scenario,
+            StudentV4 student,
+            boolean correct,
+            LocalDateTime now
+    ) {
+        ClassroomV4 classroom = scenario.getClassroom();
+
+        if (classroom == null || classroom.getActiveTrainingSessionId() == null) {
+            return;
+        }
+
+        studentCallMissionRepositoryV4
+                .findByScenario_IdAndTrainingSessionIdAndStudent_Id(
+                        scenario.getId(),
+                        classroom.getActiveTrainingSessionId(),
+                        student.getId()
+                )
+                .ifPresent(mission -> {
+                    if (mission.getStatus() == CallMissionStatus.SUCCESS
+                            || mission.getStatus() == CallMissionStatus.FAILED) {
+                        return;
+                    }
+
+                    mission.setStatus(correct ? CallMissionStatus.SUCCESS : CallMissionStatus.FAILED);
+
+                    if (mission.getCallEndedAt() == null) {
+                        mission.setCallEndedAt(now);
+                    }
+
+                    mission.setUpdatedAt(now);
+                    studentCallMissionRepositoryV4.save(mission);
+                });
     }
 
     private List<String> getCorrectCallOrder() {

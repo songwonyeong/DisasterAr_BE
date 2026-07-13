@@ -204,10 +204,28 @@ public class ChannelService {
             throw new IllegalStateException("훈련 중에는 새로 입장할 수 없습니다. 훈련 종료 후 다시 입장해 주세요.");
         }
 
+        String studentName = req.getStudentName() != null
+                ? req.getStudentName().trim()
+                : null;
+
+        if (studentName == null || studentName.isBlank()) {
+            throw new IllegalArgumentException("학생 이름은 필수입니다.");
+        }
+
+        boolean duplicatedWaitingName =
+                studentRepository.existsByClassroom_IdAndIsKickedFalseAndTrainingSessionIdIsNullAndStudentNameIgnoreCase(
+                        classroom.getId(),
+                        studentName
+                );
+
+        if (duplicatedWaitingName) {
+            throw new IllegalArgumentException("이미 같은 이름의 학생이 입장해 있습니다. 이름 뒤에 번호를 붙여 주세요.");
+        }
+
         StudentV4 student = StudentV4.builder()
                 .id(UUID.randomUUID().toString())
                 .classroom(classroom)
-                .studentName(req.getStudentName())
+                .studentName(studentName)
                 .joinedAt(LocalDateTime.now())
                 .status(StudentStatus.UNKNOWN)
                 .isKicked(false)

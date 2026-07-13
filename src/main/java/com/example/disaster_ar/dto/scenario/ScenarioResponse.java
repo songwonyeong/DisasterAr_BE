@@ -27,5 +27,9 @@ public class ScenarioResponse {
     private String npcPositionsJson;
 
     private Integer participantCount;
+
+    private Boolean teacherCallEnabled;
+    private String teacherPhoneNumber;
+
     private LocalDateTime createdTime;
 }

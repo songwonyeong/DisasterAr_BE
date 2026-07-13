@@ -28,5 +28,9 @@ public class ScenarioCreateRequest {
     private String teamAssignment; // 팀 배정 정보 JSON
     private String npcPositions;   // NPC 위치 정보 JSON
 
-    private Integer participantCount; // 참가 인원 수
+    private Integer participantCount;
+
+    // 선생님 전화 미션 옵션
+    private Boolean teacherCallEnabled;
+    private String teacherPhoneNumber; // 참가 인원 수
 }

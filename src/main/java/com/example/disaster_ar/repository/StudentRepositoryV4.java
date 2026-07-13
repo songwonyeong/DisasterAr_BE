@@ -28,4 +28,9 @@ public interface StudentRepositoryV4 extends JpaRepository<StudentV4, String> {
      where s.lastBeacon.id = :beaconId
 """)
     int clearLastBeaconByBeaconId(@Param("beaconId") String beaconId);
+
+    boolean existsByClassroom_IdAndIsKickedFalseAndTrainingSessionIdIsNullAndStudentNameIgnoreCase(
+            String classroomId,
+            String studentName
+    );
 }
