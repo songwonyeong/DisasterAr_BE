@@ -1198,7 +1198,7 @@ public class ScenarioService {
 
     private Boolean toBoolean(Object value) {
         if (value == null) {
-            return null;
+            return false;
         }
 
         if (value instanceof Boolean bool) {
