@@ -399,11 +399,13 @@ public class AiPayloadService {
         payload.put("stair_positions", parsedMap.stairPositions());
         payload.put("outline_bboxes", parsedMap.outlineBboxes());
 
-        if (request.getTargetNodeId() != null && !request.getTargetNodeId().isBlank()) {
-            payload.put("target_node_id", request.getTargetNodeId());
-        } else {
-            payload.put("target_node_id", null);
+        String resolvedTargetNodeId = request.getTargetNodeId();
+
+        if (resolvedTargetNodeId == null || resolvedTargetNodeId.isBlank()) {
+            resolvedTargetNodeId = targetElementId;
         }
+
+        payload.put("target_node_id", resolvedTargetNodeId);
 
         return payload;
     }
