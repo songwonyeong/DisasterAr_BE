@@ -42,4 +42,17 @@ public class AiController {
                 aiPayloadService.buildFeedbackPayload(scenarioId, studentId)
         );
     }
+
+    @PostMapping("/scenarios/{scenarioId}/students/{studentId}/feedback")
+    public ResponseEntity<AiFeedbackResponse> generateFeedback(
+            @PathVariable String scenarioId,
+            @PathVariable String studentId
+    ) {
+        AiFeedbackPayloadResponse payload =
+                aiPayloadService.buildFeedbackPayload(scenarioId, studentId);
+
+        return ResponseEntity.ok(
+                aiService.feedbackFromPayload(payload)
+        );
+    }
 }

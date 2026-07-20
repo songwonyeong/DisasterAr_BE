@@ -17,6 +17,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import com.example.disaster_ar.dto.ai.AiFeedbackPayloadResponse;
 
 @Service
 @RequiredArgsConstructor
@@ -73,6 +74,54 @@ public class AiService {
         return AiFeedbackResponse.builder()
                 .result(asText(response, "result"))
                 .build();
+    }
+
+    public AiFeedbackResponse feedbackFromPayload(AiFeedbackPayloadResponse payload) {
+        if (payload == null) {
+            throw ApiException.badRequest(
+                    "INVALID_AI_FEEDBACK_PAYLOAD",
+                    "AI 피드백 payload가 비어 있습니다."
+            );
+        }
+
+        if (payload.getStudentId() == null || payload.getStudentId().isBlank()) {
+            throw ApiException.badRequest(
+                    "INVALID_AI_FEEDBACK_PAYLOAD",
+                    "studentId는 필수입니다."
+            );
+        }
+
+        if (payload.getStudentName() == null || payload.getStudentName().isBlank()) {
+            throw ApiException.badRequest(
+                    "INVALID_AI_FEEDBACK_PAYLOAD",
+                    "studentName은 필수입니다."
+            );
+        }
+
+        JsonNode response = postJson("/feedback", payload);
+
+        return AiFeedbackResponse.builder()
+                .result(resolveFeedbackResult(response))
+                .build();
+    }
+
+    private String resolveFeedbackResult(JsonNode response) {
+        String result = asText(response, "result");
+        if (result != null) {
+            return result;
+        }
+
+        String feedback = asText(response, "feedback");
+        if (feedback != null) {
+            return feedback;
+        }
+
+        String message = asText(response, "message");
+        if (message != null) {
+            return message;
+        }
+
+        return response != null ? response.toString() : null;
     }
 
     private JsonNode postJson(String path, Object body) {
