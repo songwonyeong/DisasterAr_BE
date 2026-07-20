@@ -18,6 +18,9 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import com.example.disaster_ar.dto.ai.AiFeedbackPayloadResponse;
+import java.nio.charset.StandardCharsets;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 @Service
 @RequiredArgsConstructor
@@ -98,11 +101,81 @@ public class AiService {
             );
         }
 
-        JsonNode response = postJson("/feedback", payload);
+        Map<String, Object> body = toFeedbackServerBody(payload);
+        JsonNode response = postJson("/feedback", body);
 
         return AiFeedbackResponse.builder()
                 .result(resolveFeedbackResult(response))
                 .build();
+    }
+
+    private Map<String, Object> toFeedbackServerBody(AiFeedbackPayloadResponse payload) {
+        Map<String, Object> body = new LinkedHashMap<>();
+
+        body.put("student_name", payload.getStudentName().trim());
+
+        List<Map<String, Object>> missions = new ArrayList<>();
+
+        if (payload.getMissions() != null) {
+            for (AiFeedbackPayloadResponse.MissionResult mission : payload.getMissions()) {
+                if (mission == null) {
+                    continue;
+                }
+
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("title", toMissionTitle(mission.getMissionType()));
+                item.put("status", Boolean.TRUE.equals(mission.getCompleted()) ? "완료" : "미완료");
+                missions.add(item);
+            }
+        }
+
+        body.put("missions", missions);
+
+        // 현재 payload의 quizResults가 비어 있으므로 일단 빈 배열로 전달
+        body.put("quizzes", new ArrayList<>());
+
+        body.put("call_119", isMissionCompleted(payload, "CALL_119")
+                || Boolean.TRUE.equals(payload.getReportCallCompleted()));
+
+        return body;
+    }
+
+    private String toMissionTitle(String missionType) {
+        if (missionType == null || missionType.isBlank()) {
+            return "알 수 없는 미션";
+        }
+
+        return switch (missionType) {
+            case "EXTINGUISHER_ACQUIRED" -> "소화기 찾기";
+            case "CALL_119" -> "119 신고 순서 맞추기";
+            case "SAFEZONE" -> "제한 시간 내 안전구역 도착";
+            case "RANDOM_QUIZ" -> "랜덤 퀴즈 3개 이상 맞추기";
+
+            case "FIRETEAM_DONUT" -> "소화팀: 도넛 게임으로 불 끄기";
+            case "FIRETEAM_EXTINGUISHER_ACQUIRED" -> "소화팀: 소화기 획득";
+            case "FIRETEAM_EXTINGUISHER_QUIZ" -> "소화팀: 소화기 사용 퀴즈";
+
+            default -> missionType;
+        };
+    }
+
+    private boolean isMissionCompleted(AiFeedbackPayloadResponse payload, String missionType) {
+        if (payload == null || payload.getMissions() == null || missionType == null) {
+            return false;
+        }
+
+        for (AiFeedbackPayloadResponse.MissionResult mission : payload.getMissions()) {
+            if (mission == null) {
+                continue;
+            }
+
+            if (missionType.equals(mission.getMissionType())
+                    && Boolean.TRUE.equals(mission.getCompleted())) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private String resolveFeedbackResult(JsonNode response) {
@@ -125,9 +198,11 @@ public class AiService {
     }
 
     private JsonNode postJson(String path, Object body) {
+        String url = normalizeBaseUrl(colabBaseUrl) + path;
+
         try {
             JsonNode response = webClient.post()
-                    .uri(normalizeBaseUrl(colabBaseUrl) + path)
+                    .uri(url)
                     .header("ngrok-skip-browser-warning", "true")
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.APPLICATION_JSON)
@@ -140,18 +215,49 @@ public class AiService {
                 throw new ApiException(
                         HttpStatus.BAD_GATEWAY,
                         "AI_SERVER_EMPTY_RESPONSE",
-                        "AI 서버 응답이 비어 있습니다."
+                        "AI 서버 응답이 비어 있습니다. 호출 URL: " + url
                 );
             }
 
             return response;
+
         } catch (ApiException e) {
             throw e;
+
+        } catch (WebClientResponseException e) {
+            String responseBody = e.getResponseBodyAsString(StandardCharsets.UTF_8);
+
+            throw new ApiException(
+                    HttpStatus.BAD_GATEWAY,
+                    "AI_SERVER_HTTP_ERROR",
+                    "AI 서버 HTTP 오류: "
+                            + e.getStatusCode()
+                            + " / URL: "
+                            + url
+                            + " / 응답: "
+                            + responseBody
+            );
+
+        } catch (WebClientRequestException e) {
+            throw new ApiException(
+                    HttpStatus.BAD_GATEWAY,
+                    "AI_SERVER_CONNECTION_ERROR",
+                    "AI 서버에 연결할 수 없습니다. URL: "
+                            + url
+                            + " / 원인: "
+                            + e.getMessage()
+            );
+
         } catch (Exception e) {
             throw new ApiException(
                     HttpStatus.BAD_GATEWAY,
                     "AI_SERVER_ERROR",
-                    "AI 서버 응답을 처리할 수 없습니다."
+                    "AI 서버 응답을 처리할 수 없습니다. URL: "
+                            + url
+                            + " / 원인: "
+                            + e.getClass().getSimpleName()
+                            + " - "
+                            + e.getMessage()
             );
         }
     }
@@ -225,5 +331,16 @@ public class AiService {
         }
 
         return value.asText();
+    }
+
+    public JsonNode route(Map<String, Object> payload) {
+        if (payload == null || payload.isEmpty()) {
+            throw ApiException.badRequest(
+                    "INVALID_AI_ROUTE_PAYLOAD",
+                    "AI 경로 탐색 payload가 비어 있습니다."
+            );
+        }
+
+        return postJson("/route", payload);
     }
 }

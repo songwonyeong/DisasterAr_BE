@@ -10,6 +10,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import com.example.disaster_ar.dto.ai.AiFeedbackPayloadResponse;
 import com.example.disaster_ar.service.AiPayloadService;
+import com.example.disaster_ar.dto.ai.AiRouteRequest;
+import com.fasterxml.jackson.databind.JsonNode;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/ai")
@@ -53,6 +56,31 @@ public class AiController {
 
         return ResponseEntity.ok(
                 aiService.feedbackFromPayload(payload)
+        );
+    }
+
+    @PostMapping("/scenarios/{scenarioId}/students/{studentId}/route-payload")
+    public ResponseEntity<Map<String, Object>> getRoutePayload(
+            @PathVariable String scenarioId,
+            @PathVariable String studentId,
+            @RequestBody AiRouteRequest request
+    ) {
+        return ResponseEntity.ok(
+                aiPayloadService.buildRoutePayload(scenarioId, studentId, request)
+        );
+    }
+
+    @PostMapping("/scenarios/{scenarioId}/students/{studentId}/route")
+    public ResponseEntity<JsonNode> route(
+            @PathVariable String scenarioId,
+            @PathVariable String studentId,
+            @RequestBody AiRouteRequest request
+    ) {
+        Map<String, Object> payload =
+                aiPayloadService.buildRoutePayload(scenarioId, studentId, request);
+
+        return ResponseEntity.ok(
+                aiService.route(payload)
         );
     }
 }
