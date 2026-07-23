@@ -543,10 +543,35 @@ public class AiPayloadService {
                     elementsJson.add(copied);
 
                     String zoneType = normalizeZoneType(resolveRawZoneType(element));
-                    tagsMap.put(
-                            elementId,
-                            Map.of("zone_type", zoneType)
-                    );
+
+                    Map<String, Object> tagValue = new LinkedHashMap<>();
+                    tagValue.put("zone_type", zoneType);
+                    tagValue.put("passable", !"restricted".equalsIgnoreCase(zoneType));
+                    tagValue.put("floor", floorIndex);
+                    tagValue.put("element_id", elementId);
+
+                    Object existingObj = tagsMap.get(elementId);
+
+                    if (!(existingObj instanceof Map<?, ?> existingTag)) {
+                        tagsMap.put(elementId, tagValue);
+                    } else {
+                        String existingZoneType = asString(existingTag.get("zone_type"));
+
+                        if (existingZoneType == null || existingZoneType.isBlank()) {
+                            existingZoneType = "normal";
+                        }
+
+                        boolean existingIsNormal = "normal".equalsIgnoreCase(existingZoneType);
+                        boolean currentIsSpecial = zoneType != null
+                                && !zoneType.isBlank()
+                                && !"normal".equalsIgnoreCase(zoneType);
+
+                        // 같은 elementId가 여러 층에 중복될 때,
+                        // normal 값이 danger/safe 값을 덮어쓰지 못하게 막는다.
+                        if (existingIsNormal && currentIsSpecial) {
+                            tagsMap.put(elementId, tagValue);
+                        }
+                    }
 
                     if (isStairElement(element)) {
                         Double x = asDouble(element.get("x"));
