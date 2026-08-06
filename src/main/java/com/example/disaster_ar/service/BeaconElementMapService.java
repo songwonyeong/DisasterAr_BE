@@ -8,6 +8,7 @@ import com.example.disaster_ar.repository.BeaconRepositoryV4;
 import com.example.disaster_ar.repository.ChannelElementTagRepositoryV4;
 import com.example.disaster_ar.repository.SchoolRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,6 +16,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class BeaconElementMapService {
@@ -42,7 +44,6 @@ public class BeaconElementMapService {
         }
 
         /*
-         * 1차 핵심:
          * zoneElementId가 있으면 그걸 사용하고,
          * 없으면 기존 elementId를 zoneElementId로 사용한다.
          */
@@ -57,23 +58,47 @@ public class BeaconElementMapService {
 
         String beaconElementId = trimToNull(req.getBeaconElementId());
 
+        /*
+         * 디버깅 핵심 로그.
+         * 지금 오류 원인은 대부분 여기 값 중 하나가 예상과 다르게 들어오는 경우다.
+         */
+        log.info(
+                "[비콘매핑요청] schoolId={}, floorIndex={}, beaconId={}, beaconElementId={}, zoneElementId={}, elementId={}, placementName={}, zoneType={}",
+                schoolId,
+                req.getFloorIndex(),
+                beaconId,
+                beaconElementId,
+                zoneElementId,
+                trimToNull(req.getElementId()),
+                trimToNull(req.getPlacementName()),
+                trimToNull(req.getZoneType())
+        );
+
         SchoolV4 school = schoolRepository.findById(schoolId)
-                .orElseThrow(() -> new IllegalArgumentException("학교가 존재하지 않습니다."));
+                .orElseThrow(() -> new IllegalArgumentException("학교가 존재하지 않습니다. schoolId=" + schoolId));
 
         BeaconV4 beacon = beaconRepositoryV4.findById(beaconId)
-                .orElseThrow(() -> new IllegalArgumentException("비콘이 존재하지 않습니다."));
+                .orElseThrow(() -> new IllegalArgumentException("비콘이 존재하지 않습니다. beaconId=" + beaconId));
 
         if (beacon.getSchool() == null || !beacon.getSchool().getId().equals(school.getId())) {
-            throw new IllegalArgumentException("비콘이 해당 학교 소속이 아닙니다.");
+            throw new IllegalArgumentException(
+                    "비콘이 해당 학교 소속이 아닙니다. " +
+                            "requestSchoolId=" + schoolId +
+                            ", beaconSchoolId=" + (beacon.getSchool() != null ? beacon.getSchool().getId() : null)
+            );
         }
 
         if (!beacon.getFloorIndex().equals(req.getFloorIndex())) {
-            throw new IllegalArgumentException("비콘 floorIndex와 요청 floorIndex가 일치하지 않습니다.");
+            throw new IllegalArgumentException(
+                    "비콘 floorIndex와 요청 floorIndex가 일치하지 않습니다. " +
+                            "beaconFloorIndex=" + beacon.getFloorIndex() +
+                            ", requestFloorIndex=" + req.getFloorIndex()
+            );
         }
 
         /*
          * zoneElementId 검증.
-         * SAFE_ZONE / DISASTER_ZONE / RESTRICTED_ZONE 같은 구역 element가
+         * SAFE_ZONE / FIRE_ZONE / RESTRICTED_ZONE 같은 구역 element가
          * channel_element_tags에 존재하는지 확인한다.
          */
         ChannelElementTagV4 zoneElement = channelElementTagRepositoryV4
@@ -82,7 +107,31 @@ public class BeaconElementMapService {
                         req.getFloorIndex(),
                         zoneElementId
                 )
-                .orElseThrow(() -> new IllegalArgumentException("zoneElementId에 해당하는 element가 존재하지 않습니다."));
+                .orElseThrow(() -> {
+                    log.warn(
+                            "[비콘매핑실패: zoneElement 없음] schoolId={}, floorIndex={}, zoneElementId={}, beaconId={}, beaconElementId={}",
+                            schoolId,
+                            req.getFloorIndex(),
+                            zoneElementId,
+                            beaconId,
+                            beaconElementId
+                    );
+
+                    return new IllegalArgumentException(
+                            "zoneElementId에 해당하는 element가 존재하지 않습니다. " +
+                                    "schoolId=" + schoolId +
+                                    ", floorIndex=" + req.getFloorIndex() +
+                                    ", zoneElementId=" + zoneElementId
+                    );
+                });
+
+        log.info(
+                "[비콘매핑검증성공: zoneElement] elementId={}, elementType={}, name={}, floorIndex={}",
+                zoneElement.getElementId(),
+                zoneElement.getElementType(),
+                zoneElement.getName(),
+                zoneElement.getFloorIndex()
+        );
 
         /*
          * beaconElementId는 선택값.
@@ -95,7 +144,22 @@ public class BeaconElementMapService {
                             req.getFloorIndex(),
                             beaconElementId
                     )
-                    .orElseThrow(() -> new IllegalArgumentException("beaconElementId에 해당하는 element가 존재하지 않습니다."));
+                    .orElseThrow(() -> {
+                        log.warn(
+                                "[비콘매핑실패: beaconElement 없음] schoolId={}, floorIndex={}, beaconElementId={}, zoneElementId={}",
+                                schoolId,
+                                req.getFloorIndex(),
+                                beaconElementId,
+                                zoneElementId
+                        );
+
+                        return new IllegalArgumentException(
+                                "beaconElementId에 해당하는 element가 존재하지 않습니다. " +
+                                        "schoolId=" + schoolId +
+                                        ", floorIndex=" + req.getFloorIndex() +
+                                        ", beaconElementId=" + beaconElementId
+                        );
+                    });
         }
 
         /*
@@ -120,7 +184,6 @@ public class BeaconElementMapService {
         mapping.setBeacon(beacon);
 
         /*
-         * 중요:
          * 기존 element_id는 호환용으로 남긴다.
          * 1차에서는 element_id = zone_element_id 로 맞춘다.
          */
@@ -182,6 +245,20 @@ public class BeaconElementMapService {
         mapping.setUpdatedAt(now);
 
         BeaconElementMapV4 saved = beaconElementMapRepositoryV4.save(mapping);
+
+        log.info(
+                "[비콘매핑저장완료] mappingId={}, schoolId={}, floorIndex={}, beaconId={}, beaconElementId={}, zoneElementId={}, placementName={}, zoneType={}, thresholdRssi={}, active={}",
+                saved.getId(),
+                saved.getSchool() != null ? saved.getSchool().getId() : null,
+                saved.getFloorIndex(),
+                saved.getBeacon() != null ? saved.getBeacon().getId() : null,
+                saved.getBeaconElementId(),
+                saved.getZoneElementId(),
+                saved.getPlacementName(),
+                saved.getZoneType(),
+                saved.getEffectiveThresholdRssi(),
+                saved.isEffectivelyActive()
+        );
 
         return toResponse(saved);
     }
