@@ -47,16 +47,17 @@ public class BeaconElementMapService {
          * zoneElementId가 있으면 그걸 사용하고,
          * 없으면 기존 elementId를 zoneElementId로 사용한다.
          */
-        String zoneElementId = trimToNull(req.getZoneElementId());
-        if (zoneElementId == null) {
-            zoneElementId = trimToNull(req.getElementId());
+        String requestedZoneElementId = trimToNull(req.getZoneElementId());
+        if (requestedZoneElementId == null) {
+            requestedZoneElementId = trimToNull(req.getElementId());
         }
 
-        if (zoneElementId == null) {
+        if (requestedZoneElementId == null) {
             throw new IllegalArgumentException("zoneElementId 또는 elementId가 필요합니다.");
         }
 
-        String beaconElementId = trimToNull(req.getBeaconElementId());
+        final String zoneElementId = requestedZoneElementId;
+        final String beaconElementId = trimToNull(req.getBeaconElementId());
 
         /*
          * 디버깅 핵심 로그.
