@@ -1,37 +1,20 @@
 package com.example.disaster_ar.service;
 
-import com.example.disaster_ar.domain.v4.ChannelMapV4;
-import com.example.disaster_ar.domain.v4.ClassroomV4;
-import com.example.disaster_ar.domain.v4.RoomMapVersionV4;
-import com.example.disaster_ar.domain.v4.ScenarioV4;
-import com.example.disaster_ar.domain.v4.SchoolMapTemplateV4;
-import com.example.disaster_ar.domain.v4.SchoolV4;
-import com.example.disaster_ar.domain.v4.StudentV4;
-import com.example.disaster_ar.domain.v4.UserV4;
+import com.example.disaster_ar.domain.v4.*;
 import com.example.disaster_ar.domain.v4.enums.*;
+import com.example.disaster_ar.dto.beacon.BeaconElementMapResponse;
 import com.example.disaster_ar.dto.room.*;
 import com.example.disaster_ar.dto.scenario.TeamDistributionRequest;
 import com.example.disaster_ar.repository.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.example.disaster_ar.domain.v4.BeaconV4;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import com.example.disaster_ar.domain.v4.ScenarioAssignmentV4;
-import com.example.disaster_ar.domain.v4.ScenarioTriggerV4;
-import com.example.disaster_ar.domain.v4.ScenarioTeamV4;
-import com.example.disaster_ar.domain.v4.ScenarioTeamMemberV4;
 
 import java.time.LocalDateTime;
-import com.example.disaster_ar.domain.v4.ContentV4;
 
 import java.util.Random;
 import java.util.LinkedHashMap;
-import com.example.disaster_ar.domain.v4.ItemV4;
-import com.example.disaster_ar.domain.v4.StudentItemV4;
-import com.example.disaster_ar.domain.v4.StudentMissionProgressV4;
-import com.example.disaster_ar.domain.v4.ScenarioActionEventV4;
-import com.example.disaster_ar.domain.v4.TeamMissionProgressV4;
 
 import java.time.Duration;
 import java.util.List;
@@ -75,6 +58,9 @@ public class RoomService {
     private final CardQuizSubmissionRepositoryV4 cardQuizSubmissionRepositoryV4;
     private final EvaluationRepositoryV4 evaluationRepositoryV4;
     private final StudentCallMissionService studentCallMissionService;
+    private final BeaconRepositoryV4 beaconRepositoryV4;
+    private final BeaconElementMapRepositoryV4 beaconElementMapRepositoryV4;
+    private final ChannelElementTagRepositoryV4 channelElementTagRepositoryV4;
 
 
     public RoomResponse createRoom(RoomCreateRequest req) {
@@ -2833,6 +2819,367 @@ public class RoomService {
          * 훈련 시작 시 이전 평가 결과도 화면에 안 남기려면 삭제.
          */
         evaluationRepositoryV4.deleteByScenario_Id(scenarioId);
+    }
+
+    @Transactional
+    public BeaconElementMapResponse updateBeaconPlacement(
+            String classroomId,
+            String beaconId,
+            BeaconPlacementUpdateRequest req
+    ) {
+        if (req == null) {
+            throw new IllegalArgumentException("요청값이 비어 있습니다.");
+        }
+
+        if (req.getFloorIndex() == null) {
+            throw new IllegalArgumentException("floorIndex는 필수입니다.");
+        }
+
+        if (req.getX() == null || req.getY() == null) {
+            throw new IllegalArgumentException("x, y 좌표는 필수입니다.");
+        }
+
+        String zoneElementId = trimToNull(req.getZoneElementId());
+
+        if (zoneElementId == null) {
+            throw new IllegalArgumentException("zoneElementId는 필수입니다.");
+        }
+
+        ClassroomV4 classroom = classroomRepository.findById(classroomId)
+                .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
+
+        validateNotRunning(classroom);
+
+        if (classroom.getSchool() == null) {
+            throw new IllegalArgumentException("교실의 학교 정보가 없습니다.");
+        }
+
+        String schoolId = classroom.getSchool().getId();
+
+        BeaconV4 beacon = beaconRepositoryV4.findById(beaconId)
+                .orElseThrow(() -> new IllegalArgumentException("비콘이 존재하지 않습니다."));
+
+        if (beacon.getSchool() == null
+                || !schoolId.equals(beacon.getSchool().getId())) {
+            throw new IllegalArgumentException("비콘이 해당 교실의 학교 소속이 아닙니다.");
+        }
+
+        Integer nextFloorIndex = req.getFloorIndex();
+
+        /*
+         * floorIndex를 바꾸는 경우, beaconNo unique 충돌 방지.
+         */
+        if (!nextFloorIndex.equals(beacon.getFloorIndex())
+                && beacon.getBeaconNo() != null) {
+            beaconRepositoryV4
+                    .findBySchool_IdAndFloorIndexAndBeaconNo(
+                            schoolId,
+                            nextFloorIndex,
+                            beacon.getBeaconNo()
+                    )
+                    .filter(existing -> !existing.getId().equals(beacon.getId()))
+                    .ifPresent(existing -> {
+                        throw new IllegalArgumentException("이동할 층에 같은 beaconNo가 이미 존재합니다.");
+                    });
+        }
+
+        /*
+         * zoneElementId 검증.
+         * 지금은 B안으로 channel_element_tags에 safe-1, room-fire-1을 넣었으므로
+         * 여기 기준으로 검증하면 됨.
+         */
+        ChannelElementTagV4 zoneElement = channelElementTagRepositoryV4
+                .findBySchool_IdAndFloorIndexAndElementId(
+                        schoolId,
+                        nextFloorIndex,
+                        zoneElementId
+                )
+                .orElseThrow(() -> new IllegalArgumentException("zoneElementId에 해당하는 element가 존재하지 않습니다."));
+
+        /*
+         * 1. beacons 테이블 좌표 수정.
+         * 기존 등록된 비콘 자체의 위치를 바꾸는 핵심 부분.
+         */
+        beacon.setFloorIndex(nextFloorIndex);
+        beacon.setX(req.getX());
+        beacon.setY(req.getY());
+
+        if (req.getRealXM() != null) beacon.setRealXM(req.getRealXM());
+        if (req.getRealYM() != null) beacon.setRealYM(req.getRealYM());
+        if (req.getRealZM() != null) beacon.setRealZM(req.getRealZM());
+
+        beacon.setUpdatedAt(LocalDateTime.now());
+
+        BeaconV4 savedBeacon = beaconRepositoryV4.save(beacon);
+
+        /*
+         * 2. beacon_element_maps 수정.
+         * 같은 beaconId의 기존 매핑이 있으면 수정하고, 없으면 생성.
+         */
+        BeaconElementMapV4 mapping = beaconElementMapRepositoryV4
+                .findByBeacon_Id(beaconId)
+                .orElseGet(() -> BeaconElementMapV4.builder()
+                        .id(UUID.randomUUID().toString())
+                        .createdAt(LocalDateTime.now())
+                        .build());
+
+        LocalDateTime now = LocalDateTime.now();
+
+        if (mapping.getCreatedAt() == null) {
+            mapping.setCreatedAt(now);
+        }
+
+        mapping.setSchool(classroom.getSchool());
+        mapping.setFloorIndex(nextFloorIndex);
+        mapping.setBeacon(savedBeacon);
+
+        mapping.setElementId(zoneElementId);
+        mapping.setZoneElementId(zoneElementId);
+
+        /*
+         * 현재 방식에서는 active map JSON 안의 beacon element를 쓰지 않으므로
+         * beaconElementId는 건드리지 않는다.
+         * 기존 값이 있으면 유지, 없으면 null 그대로.
+         */
+
+        mapping.setPlacementName(
+                hasText(req.getPlacementName())
+                        ? req.getPlacementName().trim()
+                        : zoneElement.getName()
+        );
+
+        mapping.setZoneType(
+                hasText(req.getZoneType())
+                        ? req.getZoneType().trim()
+                        : zoneElement.getElementType()
+        );
+
+        Integer thresholdRssi = req.getThresholdRssi();
+        if (thresholdRssi == null) {
+            thresholdRssi = mapping.getThresholdRssi();
+        }
+        if (thresholdRssi == null || thresholdRssi == 0) {
+            thresholdRssi = -85;
+        }
+
+        if (thresholdRssi > 0 || thresholdRssi < -120) {
+            throw new IllegalArgumentException("thresholdRssi 값이 올바르지 않습니다.");
+        }
+
+        mapping.setThresholdRssi(thresholdRssi);
+
+        Boolean active = req.getIsActive();
+        if (active == null) {
+            active = mapping.getActive();
+        }
+        if (active == null) {
+            active = true;
+        }
+
+        mapping.setActive(active);
+        mapping.setUpdatedAt(now);
+
+        BeaconElementMapV4 savedMapping = beaconElementMapRepositoryV4.save(mapping);
+
+        return toBeaconElementMapResponse(savedMapping);
+    }
+
+    private record BeaconMapJsonUpdateResult(
+            String floorsJson,
+            String beaconElementId
+    ) {}
+
+    @SuppressWarnings("unchecked")
+    private BeaconMapJsonUpdateResult updateBeaconElementInFloorsJson(
+            String floorsJson,
+            Integer floorIndex,
+            String serverBeaconId,
+            String beaconElementId,
+            Double x,
+            Double y
+    ) {
+        try {
+            Object root = objectMapper.readValue(floorsJson, Object.class);
+
+            List<Map<String, Object>> floors = extractMutableFloors(root);
+
+            boolean updated = false;
+            String resolvedBeaconElementId = beaconElementId;
+
+            for (Map<String, Object> floor : floors) {
+                Integer currentFloorIndex = asInteger(firstNonNull(
+                        floor.get("floorIndex"),
+                        floor.get("floor_index"),
+                        floor.get("floor"),
+                        floor.get("index")
+                ));
+
+                List<Map<String, Object>> elements = extractMutableElements(floor);
+
+                /*
+                 * floor 객체에 floorIndex가 없고 element에만 floor가 있는 경우도 있으므로,
+                 * 일단 elements까지 본다.
+                 */
+                for (Map<String, Object> element : elements) {
+                    Integer elementFloor = asInteger(firstNonNull(
+                            element.get("floorIndex"),
+                            element.get("floor_index"),
+                            element.get("floor")
+                    ));
+
+                    Integer effectiveFloor = currentFloorIndex != null
+                            ? currentFloorIndex
+                            : elementFloor;
+
+                    if (effectiveFloor == null || !effectiveFloor.equals(floorIndex)) {
+                        continue;
+                    }
+
+                    String elementId = trimToNull(asString(firstNonNull(
+                            element.get("id"),
+                            element.get("elementId"),
+                            element.get("element_id")
+                    )));
+
+                    String elementServerBeaconId = trimToNull(asString(firstNonNull(
+                            element.get("serverBeaconId"),
+                            element.get("server_beacon_id"),
+                            element.get("beaconId"),
+                            element.get("beacon_id")
+                    )));
+
+                    boolean matchedByElementId = beaconElementId != null
+                            && beaconElementId.equals(elementId);
+
+                    boolean matchedByServerBeaconId = serverBeaconId != null
+                            && serverBeaconId.equals(elementServerBeaconId);
+
+                    if (!matchedByElementId && !matchedByServerBeaconId) {
+                        continue;
+                    }
+
+                    element.put("x", x);
+                    element.put("y", y);
+                    element.put("floor", floorIndex);
+                    element.put("floorIndex", floorIndex);
+                    element.put("serverBeaconId", serverBeaconId);
+
+                    if (elementId != null) {
+                        resolvedBeaconElementId = elementId;
+                    }
+
+                    updated = true;
+                    break;
+                }
+
+                if (updated) {
+                    break;
+                }
+            }
+
+            if (!updated) {
+                throw new IllegalArgumentException("활성 구조도에서 해당 비콘 element를 찾을 수 없습니다.");
+            }
+
+            return new BeaconMapJsonUpdateResult(
+                    objectMapper.writeValueAsString(root),
+                    resolvedBeaconElementId
+            );
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("활성 구조도 floorsJson 수정 중 오류가 발생했습니다.", e);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> extractMutableFloors(Object root) {
+        Object floorsObj;
+
+        if (root instanceof List<?>) {
+            floorsObj = root;
+        } else if (root instanceof Map<?, ?> rootMap) {
+            floorsObj = rootMap.get("floors");
+        } else {
+            throw new IllegalArgumentException("floorsJson 형식이 올바르지 않습니다.");
+        }
+
+        if (!(floorsObj instanceof List<?> list)) {
+            throw new IllegalArgumentException("floorsJson에 floors 배열이 없습니다.");
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        for (Object item : list) {
+            if (item instanceof Map<?, ?> map) {
+                result.add((Map<String, Object>) map);
+            }
+        }
+
+        return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> extractMutableElements(Map<String, Object> floor) {
+        Object elementsObj = firstNonNull(
+                floor.get("elements"),
+                floor.get("elementsJson"),
+                floor.get("elements_json")
+        );
+
+        if (elementsObj instanceof String text) {
+            try {
+                elementsObj = objectMapper.readValue(text, Object.class);
+            } catch (Exception e) {
+                return List.of();
+            }
+        }
+
+        if (!(elementsObj instanceof List<?> list)) {
+            return List.of();
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+
+        for (Object item : list) {
+            if (item instanceof Map<?, ?> map) {
+                result.add((Map<String, Object>) map);
+            }
+        }
+
+        return result;
+    }
+
+    private String trimToNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private BeaconElementMapResponse toBeaconElementMapResponse(BeaconElementMapV4 mapping) {
+        String effectiveZoneElementId = mapping.getEffectiveZoneElementId();
+
+        return BeaconElementMapResponse.builder()
+                .id(mapping.getId())
+                .schoolId(mapping.getSchool() != null ? mapping.getSchool().getId() : null)
+                .floorIndex(mapping.getFloorIndex())
+                .beaconId(mapping.getBeacon() != null ? mapping.getBeacon().getId() : null)
+                .beaconName(mapping.getBeacon() != null ? mapping.getBeacon().getName() : null)
+                .elementId(effectiveZoneElementId)
+                .beaconElementId(mapping.getBeaconElementId())
+                .zoneElementId(effectiveZoneElementId)
+                .placementName(mapping.getPlacementName())
+                .zoneType(mapping.getZoneType())
+                .thresholdRssi(mapping.getEffectiveThresholdRssi())
+                .isActive(mapping.getActive())
+                .createdAt(mapping.getCreatedAt())
+                .updatedAt(mapping.getUpdatedAt())
+                .build();
     }
 
 }

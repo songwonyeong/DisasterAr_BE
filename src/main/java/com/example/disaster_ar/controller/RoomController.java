@@ -286,4 +286,16 @@ public class RoomController {
                 roomService.syncBeaconMappingsForActiveMap(classroomId)
         );
     }
+
+    @Operation(summary = "[26.08.11] 활성 구조도 비콘 배치 위치 수정 API")
+    @PatchMapping("/{classroomId}/beacon-placements/{beaconId}")
+    public ResponseEntity<com.example.disaster_ar.dto.beacon.BeaconElementMapResponse> updateBeaconPlacement(
+            @PathVariable String classroomId,
+            @PathVariable String beaconId,
+            @RequestBody BeaconPlacementUpdateRequest request
+    ) {
+        return ResponseEntity.ok(
+                roomService.updateBeaconPlacement(classroomId, beaconId, request)
+        );
+    }
 }
