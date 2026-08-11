@@ -2841,10 +2841,6 @@ public class RoomService {
 
         String zoneElementId = trimToNull(req.getZoneElementId());
 
-        if (zoneElementId == null) {
-            throw new IllegalArgumentException("zoneElementId는 필수입니다.");
-        }
-
         ClassroomV4 classroom = classroomRepository.findById(classroomId)
                 .orElseThrow(() -> new IllegalArgumentException("교실이 존재하지 않습니다."));
 
@@ -2867,7 +2863,7 @@ public class RoomService {
         Integer nextFloorIndex = req.getFloorIndex();
 
         /*
-         * floorIndex를 바꾸는 경우, beaconNo unique 충돌 방지.
+         * floorIndex 변경 시 beaconNo 중복 방지
          */
         if (!nextFloorIndex.equals(beacon.getFloorIndex())
                 && beacon.getBeaconNo() != null) {
@@ -2884,21 +2880,7 @@ public class RoomService {
         }
 
         /*
-         * zoneElementId 검증.
-         * 지금은 B안으로 channel_element_tags에 safe-1, room-fire-1을 넣었으므로
-         * 여기 기준으로 검증하면 됨.
-         */
-        ChannelElementTagV4 zoneElement = channelElementTagRepositoryV4
-                .findBySchool_IdAndFloorIndexAndElementId(
-                        schoolId,
-                        nextFloorIndex,
-                        zoneElementId
-                )
-                .orElseThrow(() -> new IllegalArgumentException("zoneElementId에 해당하는 element가 존재하지 않습니다."));
-
-        /*
-         * 1. beacons 테이블 좌표 수정.
-         * 기존 등록된 비콘 자체의 위치를 바꾸는 핵심 부분.
+         * 1. beacons 테이블 위치 수정
          */
         beacon.setFloorIndex(nextFloorIndex);
         beacon.setX(req.getX());
@@ -2913,15 +2895,61 @@ public class RoomService {
         BeaconV4 savedBeacon = beaconRepositoryV4.save(beacon);
 
         /*
-         * 2. beacon_element_maps 수정.
-         * 같은 beaconId의 기존 매핑이 있으면 수정하고, 없으면 생성.
+         * 기존 매핑 조회
          */
-        BeaconElementMapV4 mapping = beaconElementMapRepositoryV4
+        BeaconElementMapV4 existingMapping = beaconElementMapRepositoryV4
                 .findByBeacon_Id(beaconId)
-                .orElseGet(() -> BeaconElementMapV4.builder()
-                        .id(UUID.randomUUID().toString())
-                        .createdAt(LocalDateTime.now())
-                        .build());
+                .orElse(null);
+
+        /*
+         * 2. zoneElementId가 없으면 위치만 수정하고 종료
+         * 구역 매핑은 건드리지 않는다.
+         */
+        if (zoneElementId == null) {
+            if (existingMapping != null) {
+                return toBeaconElementMapResponse(existingMapping);
+            }
+
+            return BeaconElementMapResponse.builder()
+                    .id(null)
+                    .schoolId(schoolId)
+                    .floorIndex(savedBeacon.getFloorIndex())
+                    .beaconId(savedBeacon.getId())
+                    .beaconName(savedBeacon.getName())
+                    .elementId(null)
+                    .beaconElementId(null)
+                    .zoneElementId(null)
+                    .placementName(null)
+                    .zoneType(null)
+                    .thresholdRssi(null)
+                    .isActive(null)
+                    .createdAt(null)
+                    .updatedAt(savedBeacon.getUpdatedAt())
+                    .build();
+        }
+
+        /*
+         * 3. zoneElementId가 있을 때만 구역 검증
+         */
+        ChannelElementTagV4 zoneElement = channelElementTagRepositoryV4
+                .findBySchool_IdAndFloorIndexAndElementId(
+                        schoolId,
+                        nextFloorIndex,
+                        zoneElementId
+                )
+                .orElseThrow(() -> new IllegalArgumentException("zoneElementId에 해당하는 element가 존재하지 않습니다."));
+
+        /*
+         * 4. zoneElementId가 있을 때만 beacon_element_maps 수정 또는 생성
+         */
+        BeaconElementMapV4 mapping = existingMapping;
+
+        if (mapping == null) {
+            mapping = BeaconElementMapV4.builder()
+                    .id(UUID.randomUUID().toString())
+                    .createdAt(LocalDateTime.now())
+                    .build();
+        }
 
         LocalDateTime now = LocalDateTime.now();
 
@@ -2936,12 +2964,6 @@ public class RoomService {
         mapping.setElementId(zoneElementId);
         mapping.setZoneElementId(zoneElementId);
 
-        /*
-         * 현재 방식에서는 active map JSON 안의 beacon element를 쓰지 않으므로
-         * beaconElementId는 건드리지 않는다.
-         * 기존 값이 있으면 유지, 없으면 null 그대로.
-         */
-
         mapping.setPlacementName(
                 hasText(req.getPlacementName())
                         ? req.getPlacementName().trim()
@@ -2955,9 +2977,11 @@ public class RoomService {
         );
 
         Integer thresholdRssi = req.getThresholdRssi();
+
         if (thresholdRssi == null) {
             thresholdRssi = mapping.getThresholdRssi();
         }
+
         if (thresholdRssi == null || thresholdRssi == 0) {
             thresholdRssi = -85;
         }
@@ -2969,9 +2993,11 @@ public class RoomService {
         mapping.setThresholdRssi(thresholdRssi);
 
         Boolean active = req.getIsActive();
+
         if (active == null) {
             active = mapping.getActive();
         }
+
         if (active == null) {
             active = true;
         }
