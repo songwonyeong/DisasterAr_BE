@@ -910,10 +910,11 @@ public class RoomService {
         ClassroomV4 saved = classroomRepository.save(classroom);
 
         /*
-         * 2차:
-         * 활성 구조도 기준으로 비콘이 어느 zone 안에 있는지 자동 판정하고
-         * beacon_element_maps를 자동 갱신한다.
+         * 활성 구조도 기준 element tag 동기화
+         * POST /api/beacon-element-maps에서 zoneElementId 검증할 때 사용됨
          */
+        int elementTagsSynced = syncChannelElementTagsFromMapVersion(mapVersion);
+
         BeaconAutoMappingService.SyncResult syncResult =
                 beaconAutoMappingService.syncForActiveMap(saved);
 
@@ -936,6 +937,146 @@ public class RoomService {
                 .syncMappingsDeactivated(syncResult.mappingsDeactivated())
                 .syncUnmatchedBeacons(syncResult.unmatchedBeacons())
                 .build();
+    }
+
+    private int syncChannelElementTagsFromMapVersion(RoomMapVersionV4 mapVersion) {
+        if (mapVersion == null) {
+            return 0;
+        }
+
+        if (mapVersion.getSchool() == null) {
+            return 0;
+        }
+
+        if (mapVersion.getFloorsJson() == null || mapVersion.getFloorsJson().isBlank()) {
+            return 0;
+        }
+
+        SchoolV4 school = mapVersion.getSchool();
+        String schoolId = school.getId();
+
+        int syncedCount = 0;
+
+        try {
+            Object root = objectMapper.readValue(mapVersion.getFloorsJson(), Object.class);
+            List<Map<String, Object>> floors = extractMutableFloors(root);
+
+            for (int floorOrder = 0; floorOrder < floors.size(); floorOrder++) {
+                Map<String, Object> floor = floors.get(floorOrder);
+
+                Integer floorIndexFromFloor = asInteger(firstNonNull(
+                        floor.get("floorIndex"),
+                        floor.get("floor_index"),
+                        floor.get("floor"),
+                        floor.get("index")
+                ));
+
+                List<Map<String, Object>> elements = extractMutableElements(floor);
+
+                for (Map<String, Object> element : elements) {
+                    String elementId = trimToNull(asString(firstNonNull(
+                            element.get("id"),
+                            element.get("elementId"),
+                            element.get("element_id")
+                    )));
+
+                    if (elementId == null) {
+                        continue;
+                    }
+
+                    Integer elementFloorIndex = asInteger(firstNonNull(
+                            element.get("floorIndex"),
+                            element.get("floor_index"),
+                            element.get("floor")
+                    ));
+
+                    Integer resolvedFloorIndex = elementFloorIndex != null
+                            ? elementFloorIndex
+                            : floorIndexFromFloor;
+
+                    if (resolvedFloorIndex == null) {
+                        resolvedFloorIndex = floorOrder;
+                    }
+
+                    final Integer tagFloorIndex = resolvedFloorIndex;
+                    final String tagElementId = elementId;
+                    final SchoolV4 tagSchool = school;
+
+                    String elementType = trimToNull(asString(firstNonNull(
+                            element.get("elementType"),
+                            element.get("element_type"),
+                            element.get("type")
+                    )));
+
+                    String name = trimToNull(asString(firstNonNull(
+                            element.get("name"),
+                            element.get("label"),
+                            element.get("elementName"),
+                            element.get("element_name")
+                    )));
+
+                    if (name == null) {
+                        name = elementId;
+                    }
+
+                    ChannelElementTagV4 tag = channelElementTagRepositoryV4
+                            .findBySchool_IdAndFloorIndexAndElementId(
+                                    schoolId,
+                                    tagFloorIndex,
+                                    tagElementId
+                            )
+                            .orElseGet(() -> ChannelElementTagV4.builder()
+                                    .id(UUID.randomUUID().toString())
+                                    .school(tagSchool)
+                                    .floorIndex(tagFloorIndex)
+                                    .elementId(tagElementId)
+                                    .build());
+
+                    tag.setElementType(elementType);
+                    tag.setName(name);
+                    tag.setTagsJson(buildElementTagsJson(element));
+                    tag.setUpdatedAt(LocalDateTime.now());
+
+                    channelElementTagRepositoryV4.save(tag);
+                    syncedCount++;
+                }
+            }
+
+            return syncedCount;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("활성 구조도 element tag 동기화 중 오류가 발생했습니다.", e);
+        }
+    }
+
+    private String buildElementTagsJson(Map<String, Object> element) {
+        try {
+            Map<String, Object> tags = new LinkedHashMap<>();
+
+            putIfNotNull(tags, "type", element.get("type"));
+            putIfNotNull(tags, "elementType", firstNonNull(
+                    element.get("elementType"),
+                    element.get("element_type")
+            ));
+            putIfNotNull(tags, "zoneType", firstNonNull(
+                    element.get("zoneType"),
+                    element.get("zone_type")
+            ));
+            putIfNotNull(tags, "floor", firstNonNull(
+                    element.get("floor"),
+                    element.get("floorIndex"),
+                    element.get("floor_index")
+            ));
+
+            return objectMapper.writeValueAsString(tags);
+        } catch (Exception e) {
+            return "{}";
+        }
+    }
+
+    private void putIfNotNull(Map<String, Object> map, String key, Object value) {
+        if (value != null) {
+            map.put(key, value);
+        }
     }
 
     public GameStartContextResponse getGameStartContext(String classroomId) {
@@ -1428,6 +1569,7 @@ public class RoomService {
                 && classroom.getActiveMapVersion().getId().equals(saved.getId());
 
         if (isActive) {
+            syncChannelElementTagsFromMapVersion(saved);
             beaconAutoMappingService.syncForActiveMap(classroom);
         }
 
