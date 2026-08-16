@@ -3044,12 +3044,36 @@ public class RoomService {
                 .orElse(null);
 
         /*
-         * 2. zoneElementId가 없으면 위치만 수정하고 종료
-         * 구역 매핑은 건드리지 않는다.
+         * 2. zoneElementId가 없으면 현재 active map 기준으로
+         *    비콘 좌표가 포함된 방/구역을 자동 탐색한다.
+         *
+         * 프론트가 x/y만 보내도 beacons 좌표와 beacon_element_maps 매핑이
+         * 서로 따로 놀지 않도록 보정한다.
+         */
+        if (zoneElementId == null) {
+            RoomMapVersionV4 activeMapVersion = classroom.getActiveMapVersion();
+
+            if (activeMapVersion != null) {
+                zoneElementId = findContainingElementId(
+                        activeMapVersion.getFloorsJson(),
+                        nextFloorIndex,
+                        req.getX(),
+                        req.getY()
+                );
+            }
+        }
+
+        /*
+         * 그래도 찾지 못하면 위치만 저장한다.
+         * 기존 매핑이 있으면 stale 상태를 줄이기 위해 비활성 처리한다.
          */
         if (zoneElementId == null) {
             if (existingMapping != null) {
-                return toBeaconElementMapResponse(existingMapping);
+                existingMapping.setActive(false);
+                existingMapping.setUpdatedAt(LocalDateTime.now());
+                return toBeaconElementMapResponse(
+                        beaconElementMapRepositoryV4.save(existingMapping)
+                );
             }
 
             return BeaconElementMapResponse.builder()
@@ -3064,7 +3088,7 @@ public class RoomService {
                     .placementName(null)
                     .zoneType(null)
                     .thresholdRssi(null)
-                    .isActive(null)
+                    .isActive(false)
                     .createdAt(null)
                     .updatedAt(savedBeacon.getUpdatedAt())
                     .build();
@@ -3316,6 +3340,131 @@ public class RoomService {
         }
 
         return result;
+    }
+
+    private String findContainingElementId(
+            String floorsJson,
+            Integer targetFloorIndex,
+            Double x,
+            Double y
+    ) {
+        if (floorsJson == null || floorsJson.isBlank()) {
+            return null;
+        }
+
+        if (targetFloorIndex == null || x == null || y == null) {
+            return null;
+        }
+
+        try {
+            Object root = objectMapper.readValue(floorsJson, Object.class);
+            List<Map<String, Object>> floors = extractMutableFloors(root);
+
+            for (int floorOrder = 0; floorOrder < floors.size(); floorOrder++) {
+                Map<String, Object> floor = floors.get(floorOrder);
+
+                Integer floorIndexFromFloor = asInteger(firstNonNull(
+                        floor.get("floorIndex"),
+                        floor.get("floor_index"),
+                        floor.get("floor"),
+                        floor.get("index")
+                ));
+
+                if (floorIndexFromFloor == null) {
+                    floorIndexFromFloor = floorOrder;
+                }
+
+                List<Map<String, Object>> elements = extractMutableElements(floor);
+
+                for (Map<String, Object> element : elements) {
+                    if (!isMappableZoneElement(element)) {
+                        continue;
+                    }
+
+                    Integer elementFloorIndex = asInteger(firstNonNull(
+                            element.get("floorIndex"),
+                            element.get("floor_index"),
+                            element.get("floor")
+                    ));
+
+                    Integer effectiveFloorIndex = elementFloorIndex != null
+                            ? elementFloorIndex
+                            : floorIndexFromFloor;
+
+                    if (!targetFloorIndex.equals(effectiveFloorIndex)) {
+                        continue;
+                    }
+
+                    Double elementX = asDouble(element.get("x"));
+                    Double elementY = asDouble(element.get("y"));
+                    Double width = asDouble(element.get("width"));
+                    Double height = asDouble(element.get("height"));
+
+                    if (elementX == null || elementY == null || width == null || height == null) {
+                        continue;
+                    }
+
+                    boolean contains =
+                            x >= elementX &&
+                                    x <= elementX + width &&
+                                    y >= elementY &&
+                                    y <= elementY + height;
+
+                    if (!contains) {
+                        continue;
+                    }
+
+                    return trimToNull(asString(firstNonNull(
+                            element.get("id"),
+                            element.get("elementId"),
+                            element.get("element_id")
+                    )));
+                }
+            }
+
+            return null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private boolean isMappableZoneElement(Map<String, Object> element) {
+        String elementType = trimToNull(asString(firstNonNull(
+                element.get("elementType"),
+                element.get("element_type"),
+                element.get("type"),
+                element.get("zoneType"),
+                element.get("zone_type")
+        )));
+
+        if (elementType == null) {
+            return false;
+        }
+
+        String upper = elementType.toUpperCase();
+
+        return upper.contains("SAFE_ZONE")
+                || upper.contains("FIRE_ZONE")
+                || upper.contains("RESTRICTED_ZONE")
+                || upper.contains("ROOM")
+                || "방".equals(elementType)
+                || "제한구역".equals(elementType);
+    }
+
+    private Double asDouble(Object value) {
+        if (value == null) {
+            return null;
+        }
+
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+
+        try {
+            return Double.parseDouble(String.valueOf(value));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private String trimToNull(String value) {
