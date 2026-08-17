@@ -447,22 +447,17 @@ public class BeaconAutoMappingService {
         String compactUpper = compact.toUpperCase(Locale.ROOT);
 
         /*
-         * 명시적 제외. 이 값들은 zone이 아니다.
+         * 비콘/윤곽/벽만 제외한다.
+         * 일반 방("방", "ROOM")도 비콘 자동 매핑 대상 zone으로 허용한다.
          */
         if (upper.equals("BEACON")
                 || compact.equals("비콘")
-                || compact.equals("방")
                 || compact.equals("건물윤곽")
-                || compactUpper.equals("ROOM")
                 || compactUpper.equals("WALL")
                 || compactUpper.equals("OUTLINE")) {
             return false;
         }
 
-        /*
-         * 자동 매핑 대상은 zone 계열만 허용한다.
-         * contains가 아니라 exact match 중심으로 제한한다.
-         */
         return upper.equals("SAFE_ZONE")
                 || upper.equals("FIRE_ZONE")
                 || upper.equals("DISASTER_ZONE")
@@ -473,6 +468,8 @@ public class BeaconAutoMappingService {
                 || upper.equals("DISASTER")
                 || upper.equals("RESTRICTED")
                 || upper.equals("EVACUATION")
+                || compact.equals("방")
+                || compactUpper.equals("ROOM")
                 || compact.equals("안전구역")
                 || compact.equals("대피구역")
                 || compact.equals("재난구역")
@@ -684,15 +681,22 @@ public class BeaconAutoMappingService {
         }
 
         String upper = zoneType.toUpperCase(Locale.ROOT);
+        String compact = compactText(zoneType);
 
         if (upper.contains("RESTRICT")) {
             return 10;
         }
+
         if (upper.contains("FIRE") || upper.contains("DISASTER")) {
             return 20;
         }
+
         if (upper.contains("SAFE")) {
             return 30;
+        }
+
+        if (compact.equals("방") || upper.equals("ROOM")) {
+            return 100;
         }
 
         return 999;
@@ -744,7 +748,7 @@ public class BeaconAutoMappingService {
         mapping.setPlacementName(zone.name());
         mapping.setZoneType(zone.zoneType());
 
-        if (mapping.getThresholdRssi() == null) {
+        if (mapping.getThresholdRssi() == null || mapping.getThresholdRssi() == 0) {
             mapping.setThresholdRssi(DEFAULT_THRESHOLD_RSSI);
         }
 
@@ -769,12 +773,16 @@ public class BeaconAutoMappingService {
 
         String upper = value.trim().toUpperCase(Locale.ROOT);
         String compact = compactText(value);
+        String compactUpper = compact.toUpperCase(Locale.ROOT);
 
         if (upper.equals("BEACON")
                 || compact.equals("비콘")
-                || compact.equals("방")
                 || compact.equals("건물윤곽")) {
             return null;
+        }
+
+        if (compact.equals("방") || compactUpper.equals("ROOM")) {
+            return "방";
         }
 
         if (upper.equals("SAFE_ZONE")

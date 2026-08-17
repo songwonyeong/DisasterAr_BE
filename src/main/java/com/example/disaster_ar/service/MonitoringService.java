@@ -373,13 +373,9 @@ public class MonitoringService {
             Map<String, Object> zoneElement = findElementById(elements, zoneElementId);
 
             /*
-             * 핵심 방어:
-             * 1. 현재 활성 구조도에 없는 zoneElementId는 내려주지 않는다.
-             * 2. 현재 구조도에 존재하더라도 BEACON/비콘/방/건물윤곽이면 zone이 아니므로 내려주지 않는다.
-             *
-             * 현재 문제 케이스:
-             * zoneElementId = beacon-1779967677882-cvvy
-             * 해당 element는 현재 구조도에 존재하지만 elementType = BEACON이므로 skip해야 한다.
+             * 현재 활성 구조도에 없는 zoneElementId는 내려주지 않는다.
+             * BEACON/비콘/건물윤곽은 제외한다.
+             * 단, 일반 방("방", "ROOM")도 학생 위치 표시용 zone으로 허용한다.
              */
             if (zoneElement == null || !isMonitoringZoneElement(zoneElement)) {
                 continue;
@@ -402,7 +398,7 @@ public class MonitoringService {
              */
             Map<String, Object> positionElement = beaconElement != null
                     ? beaconElement
-                    : zoneElement;
+                    : null;
 
             List<StudentV4> detectedStudents =
                     studentsByBeaconId.getOrDefault(beacon.getId(), List.of());
@@ -434,8 +430,8 @@ public class MonitoringService {
 
                             .x(resolveDouble(positionElement, "x", beacon.getX()))
                             .y(resolveDouble(positionElement, "y", beacon.getY()))
-                            .width(resolveDouble(positionElement, "width", null))
-                            .height(resolveDouble(positionElement, "height", null))
+                            .width(resolveDouble(positionElement, "width", 28.0))
+                            .height(resolveDouble(positionElement, "height", 28.0))
 
                             .studentCount(studentResponses.size())
                             .students(studentResponses)
@@ -790,11 +786,13 @@ public class MonitoringService {
         String compact = compactText(value);
         String compactUpper = compact.toUpperCase(Locale.ROOT);
 
+        /*
+         * 비콘/윤곽/벽만 제외한다.
+         * 일반 방("방", "ROOM")은 학생 위치 표시용 zone으로 허용한다.
+         */
         if (upper.equals("BEACON")
                 || compact.equals("비콘")
-                || compact.equals("방")
                 || compact.equals("건물윤곽")
-                || compactUpper.equals("ROOM")
                 || compactUpper.equals("WALL")
                 || compactUpper.equals("OUTLINE")) {
             return false;
@@ -810,6 +808,8 @@ public class MonitoringService {
                 || upper.equals("DISASTER")
                 || upper.equals("RESTRICTED")
                 || upper.equals("EVACUATION")
+                || compact.equals("방")
+                || compactUpper.equals("ROOM")
                 || compact.equals("안전구역")
                 || compact.equals("대피구역")
                 || compact.equals("재난구역")
@@ -825,6 +825,11 @@ public class MonitoringService {
 
         String upper = value.trim().toUpperCase(Locale.ROOT);
         String compact = compactText(value);
+        String compactUpper = compact.toUpperCase(Locale.ROOT);
+
+        if (compact.equals("방") || compactUpper.equals("ROOM")) {
+            return "방";
+        }
 
         if (upper.equals("SAFE_ZONE")
                 || upper.equals("SAFE")

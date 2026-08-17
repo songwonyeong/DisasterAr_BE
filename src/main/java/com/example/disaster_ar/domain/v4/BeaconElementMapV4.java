@@ -120,7 +120,11 @@ public class BeaconElementMapV4 {
      * thresholdRssi가 null인 예전 데이터 보호용.
      */
     public Integer getEffectiveThresholdRssi() {
-        return thresholdRssi != null ? thresholdRssi : -85;
+        if (thresholdRssi == null || thresholdRssi == 0) {
+            return -85;
+        }
+
+        return thresholdRssi;
     }
 
     /**
