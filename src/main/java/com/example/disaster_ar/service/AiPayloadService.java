@@ -409,7 +409,6 @@ public class AiPayloadService {
         payload.put("target", elementRef(targetFloor, targetElementId));
         payload.put("disaster_elements", disasterElements);
 
-        payload.put("stair_positions", parsedMap.stairPositions());
         payload.put("outline_bboxes", parsedMap.outlineBboxes());
 
         String resolvedTargetNodeId = request.getTargetNodeId();
@@ -648,7 +647,6 @@ public class AiPayloadService {
     private record ParsedRouteMap(
             List<Map<String, Object>> elementsJson,
             Map<String, Object> tagsMap,
-            List<Map<String, Object>> stairPositions,
             Map<String, Object> outlineBboxes
     ) {}
 
@@ -669,7 +667,6 @@ public class AiPayloadService {
 
             List<Map<String, Object>> elementsJson = new ArrayList<>();
             Map<String, Object> tagsMap = new LinkedHashMap<>();
-            List<Map<String, Object>> stairPositions = new ArrayList<>();
             Map<String, Object> outlineBboxes = new LinkedHashMap<>();
 
             for (Object floorObj : floors) {
@@ -734,28 +731,12 @@ public class AiPayloadService {
                             tagsMap.put(elementId, tagValue);
                         }
                     }
-
-                    if (isStairElement(element)) {
-                        Double x = asDouble(element.get("x"));
-                        Double y = asDouble(element.get("y"));
-                        Double w = asDouble(element.get("width"));
-                        Double h = asDouble(element.get("height"));
-
-                        if (x != null && y != null) {
-                            Map<String, Object> stair = new LinkedHashMap<>();
-                            stair.put("x", x + (w != null ? w / 2.0 : 0));
-                            stair.put("y", y + (h != null ? h / 2.0 : 0));
-                            stair.put("floor", floorIndex);
-                            stairPositions.add(stair);
-                        }
-                    }
                 }
             }
 
             return new ParsedRouteMap(
                     elementsJson,
                     tagsMap,
-                    stairPositions,
                     outlineBboxes
             );
 
@@ -889,43 +870,6 @@ public class AiPayloadService {
         }
 
         return "normal";
-    }
-
-    private boolean isStairElement(Map<String, Object> element) {
-        if (element == null) {
-            return false;
-        }
-
-        Object[] candidates = {
-                element.get("type"),
-                element.get("elementType"),
-                element.get("element_type"),
-                element.get("label"),
-                element.get("name")
-        };
-
-        for (Object candidate : candidates) {
-            String value = asString(candidate);
-
-            if (value == null || value.isBlank()) {
-                continue;
-            }
-
-            String upper = value.toUpperCase(Locale.ROOT);
-            String compact = value
-                    .replaceAll("\\s+", "")
-                    .replace("_", "")
-                    .replace("-", "")
-                    .trim();
-
-            if (upper.contains("STAIR")
-                    || upper.contains("STAIRS")
-                    || compact.contains("계단")) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private Map<String, Object> buildOutlineBbox(
