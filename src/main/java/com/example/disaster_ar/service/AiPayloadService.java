@@ -20,7 +20,9 @@ import com.example.disaster_ar.repository.ScenarioAssignmentRepositoryV4;
 import com.example.disaster_ar.repository.StudentMissionProgressRepositoryV4;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.*;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AiPayloadService {
@@ -308,16 +310,41 @@ public class AiPayloadService {
             String studentId,
             AiRouteRequest request
     ) {
+        log.info("🔥 1. 앱 요청 받음 - route payload build 시작 scenarioId={}, studentId={}",
+                scenarioId,
+                studentId);
+
         if (request == null) {
+            log.warn("🔥 1-ERROR. 경로 탐색 요청 body 없음 scenarioId={}, studentId={}",
+                    scenarioId,
+                    studentId);
             throw new IllegalArgumentException("경로 탐색 요청 body는 필수입니다.");
         }
+
+        log.info("🔥 1-1. 앱 요청 body 확인 targetElementId={}, target={}, currentBeaconElementId={}, currentBeacon={}, targetNodeId={}",
+                request.getTargetElementId(),
+                request.getTarget(),
+                request.getCurrentBeaconElementId(),
+                request.getCurrentBeacon(),
+                request.getTargetNodeId());
 
         String targetElementId = resolveRequestElementId(
                 request.getTarget(),
                 request.getTargetElementId()
         );
 
+        log.info("🔥 2. target 처리 완료 scenarioId={}, studentId={}, targetElementId={}, target={}",
+                scenarioId,
+                studentId,
+                targetElementId,
+                request.getTarget());
+
         if (targetElementId == null || targetElementId.isBlank()) {
+            log.warn("🔥 2-ERROR. target 없음 scenarioId={}, studentId={}, targetElementId={}, target={}",
+                    scenarioId,
+                    studentId,
+                    request.getTargetElementId(),
+                    request.getTarget());
             throw new IllegalArgumentException("target.element_id 또는 targetElementId는 필수입니다.");
         }
 
@@ -327,8 +354,22 @@ public class AiPayloadService {
         StudentV4 student = studentRepositoryV4.findById(studentId)
                 .orElseThrow(() -> new IllegalArgumentException("학생이 존재하지 않습니다."));
 
+        BeaconV4 lastBeacon = student.getLastBeacon();
+        log.info("🔥 3-0. 현재 학생 비콘 확인 studentId={}, studentName={}, lastBeaconId={}, lastBeaconName={}, lastBeaconNo={}, lastBeaconFloor={}, lastBeaconX={}, lastBeaconY={}",
+                student.getId(),
+                student.getStudentName(),
+                lastBeacon != null ? lastBeacon.getId() : null,
+                lastBeacon != null ? lastBeacon.getName() : null,
+                lastBeacon != null ? lastBeacon.getBeaconNo() : null,
+                lastBeacon != null ? lastBeacon.getFloorIndex() : null,
+                lastBeacon != null ? lastBeacon.getX() : null,
+                lastBeacon != null ? lastBeacon.getY() : null);
+
         ClassroomV4 classroom = scenario.getClassroom();
         if (classroom == null) {
+            log.warn("🔥 1-ERROR. 시나리오의 교실 정보 없음 scenarioId={}, studentId={}",
+                    scenarioId,
+                    studentId);
             throw new IllegalArgumentException("시나리오의 교실 정보가 없습니다.");
         }
 
@@ -337,14 +378,27 @@ public class AiPayloadService {
                 : classroom.getActiveMapVersion();
 
         if (mapVersion == null) {
+            log.warn("🔥 1-ERROR. 경로 탐색 구조도 없음 scenarioId={}, studentId={}",
+                    scenarioId,
+                    studentId);
             throw new IllegalArgumentException("경로 탐색에 사용할 구조도가 없습니다.");
         }
 
         if (mapVersion.getFloorsJson() == null || mapVersion.getFloorsJson().isBlank()) {
+            log.warn("🔥 1-ERROR. 구조도 floorsJson 비어 있음 scenarioId={}, studentId={}",
+                    scenarioId,
+                    studentId);
             throw new IllegalArgumentException("구조도 floorsJson이 비어 있습니다.");
         }
 
         ParsedRouteMap parsedMap = parseRouteMap(mapVersion.getFloorsJson());
+
+        log.info("🔥 1-2. 구조도 파싱 완료 scenarioId={}, studentId={}, elementsCount={}, tagsCount={}, outlineFloors={}",
+                scenarioId,
+                studentId,
+                parsedMap.elementsJson() != null ? parsedMap.elementsJson().size() : 0,
+                parsedMap.tagsMap() != null ? parsedMap.tagsMap().size() : 0,
+                parsedMap.outlineBboxes() != null ? parsedMap.outlineBboxes().keySet() : null);
 
         CurrentBeaconLocation currentLocation = null;
 
@@ -358,6 +412,11 @@ public class AiPayloadService {
             currentBeaconElementId = currentLocation != null
                     ? currentLocation.elementId()
                     : null;
+        } else {
+            log.info("🔥 3-1. 요청 body의 currentBeacon 사용 studentId={}, currentBeaconElementId={}, currentBeacon={}",
+                    studentId,
+                    currentBeaconElementId,
+                    request.getCurrentBeacon());
         }
 
         if (currentLocation != null) {
@@ -365,6 +424,11 @@ public class AiPayloadService {
         }
 
         if (currentBeaconElementId == null) {
+            log.warn("🔥 3-ERROR. 현재 위치 비콘을 확인할 수 없습니다. scenarioId={}, studentId={}, lastBeaconId={}, lastBeaconName={}",
+                    scenarioId,
+                    studentId,
+                    lastBeacon != null ? lastBeacon.getId() : null,
+                    lastBeacon != null ? lastBeacon.getName() : null);
             throw new IllegalArgumentException("학생의 현재 비콘 위치가 없습니다.");
         }
 
@@ -379,6 +443,15 @@ public class AiPayloadService {
                 parsedMap.elementsJson(),
                 targetElementId
         );
+
+        log.info("🔥 3. beacon 처리 완료 scenarioId={}, studentId={}, currentBeaconElementId={}, currentBeaconFloor={}, targetElementId={}, targetFloor={}, currentLocation={}",
+                scenarioId,
+                studentId,
+                currentBeaconElementId,
+                currentBeaconFloor,
+                targetElementId,
+                targetFloor,
+                summarizeCurrentLocation(currentLocation));
 
         List<String> disasterElementIds = new ArrayList<>();
         List<Map<String, Object>> disasterElements = new ArrayList<>();
@@ -418,6 +491,16 @@ public class AiPayloadService {
         }
 
         payload.put("target_node_id", resolvedTargetNodeId);
+
+        log.info("🔥 4. AI 서버 요청 직전 - route payload 생성 완료 scenarioId={}, studentId={}, current_beacon={}, target={}, target_node_id={}, disaster_elements={}, stair_positions_exists={}, payloadKeys={}",
+                scenarioId,
+                studentId,
+                payload.get("current_beacon"),
+                payload.get("target"),
+                payload.get("target_node_id"),
+                payload.get("disaster_elements"),
+                payload.containsKey("stair_positions"),
+                payload.keySet());
 
         return payload;
     }
@@ -489,12 +572,29 @@ public class AiPayloadService {
     }
 
     private CurrentBeaconLocation resolveCurrentBeaconLocation(StudentV4 student) {
-        if (student == null || student.getLastBeacon() == null) {
+        if (student == null) {
+            log.warn("🔥 3-ERROR. 현재 위치 resolve 실패 - student null");
+            return null;
+        }
+
+        if (student.getLastBeacon() == null) {
+            log.warn("🔥 3-ERROR. 현재 위치 resolve 실패 - 학생 lastBeacon 없음 studentId={}, studentName={}",
+                    student.getId(),
+                    student.getStudentName());
             return null;
         }
 
         BeaconV4 beacon = student.getLastBeacon();
         String beaconId = beacon.getId();
+
+        log.info("🔥 3-0-1. 현재 학생 비콘 resolve 시작 studentId={}, beaconId={}, beaconName={}, beaconNo={}, beaconFloor={}, beaconX={}, beaconY={}",
+                student.getId(),
+                beaconId,
+                beacon.getName(),
+                beacon.getBeaconNo(),
+                beacon.getFloorIndex(),
+                beacon.getX(),
+                beacon.getY());
 
         return beaconElementMapRepositoryV4
                 .findByBeacon_IdAndActiveTrue(beaconId)
@@ -503,39 +603,71 @@ public class AiPayloadService {
                             ? mapping.getFloorIndex()
                             : beacon.getFloorIndex();
 
+                    log.info("🔥 3-0-2. active beacon mapping 확인 beaconId={}, mappingId={}, mappingFloor={}, beaconElementId={}, zoneElementId={}, elementId={}, zoneType={}, placementName={}",
+                            beaconId,
+                            mapping.getId(),
+                            mapping.getFloorIndex(),
+                            mapping.getBeaconElementId(),
+                            mapping.getZoneElementId(),
+                            mapping.getElementId(),
+                            mapping.getZoneType(),
+                            mapping.getPlacementName());
+
                     String beaconElementId = asString(mapping.getBeaconElementId());
                     if (beaconElementId != null) {
-                        return new CurrentBeaconLocation(
+                        CurrentBeaconLocation location = new CurrentBeaconLocation(
                                 beaconElementId,
                                 floorIndex,
                                 beacon,
                                 mapping
                         );
+
+                        log.info("🔥 3-0-3. currentBeaconElementId resolved by beaconElementId location={}",
+                                summarizeCurrentLocation(location));
+
+                        return location;
                     }
 
                     String zoneElementId = asString(mapping.getZoneElementId());
                     if (zoneElementId != null) {
-                        return new CurrentBeaconLocation(
+                        CurrentBeaconLocation location = new CurrentBeaconLocation(
                                 zoneElementId,
                                 floorIndex,
                                 beacon,
                                 mapping
                         );
+
+                        log.info("🔥 3-0-3. currentBeaconElementId resolved by zoneElementId location={}",
+                                summarizeCurrentLocation(location));
+
+                        return location;
                     }
 
-                    return new CurrentBeaconLocation(
+                    CurrentBeaconLocation location = new CurrentBeaconLocation(
                             buildVirtualBeaconElementId(beacon),
                             floorIndex,
                             beacon,
                             mapping
                     );
+
+                    log.info("🔥 3-0-3. currentBeaconElementId resolved by virtual beacon element location={}",
+                            summarizeCurrentLocation(location));
+
+                    return location;
                 })
-                .orElseGet(() -> new CurrentBeaconLocation(
-                        buildVirtualBeaconElementId(beacon),
-                        beacon.getFloorIndex(),
-                        beacon,
-                        null
-                ));
+                .orElseGet(() -> {
+                    CurrentBeaconLocation location = new CurrentBeaconLocation(
+                            buildVirtualBeaconElementId(beacon),
+                            beacon.getFloorIndex(),
+                            beacon,
+                            null
+                    );
+
+                    log.info("🔥 3-0-2. active beacon mapping 없음 - virtual beacon element 사용 location={}",
+                            summarizeCurrentLocation(location));
+
+                    return location;
+                });
     }
 
     private void ensureBeaconElementExists(
@@ -643,6 +775,32 @@ public class AiPayloadService {
             BeaconV4 beacon,
             BeaconElementMapV4 mapping
     ) {}
+
+    private Map<String, Object> summarizeCurrentLocation(CurrentBeaconLocation location) {
+        if (location == null) {
+            return null;
+        }
+
+        Map<String, Object> summary = new LinkedHashMap<>();
+        BeaconV4 beacon = location.beacon();
+        BeaconElementMapV4 mapping = location.mapping();
+
+        summary.put("elementId", location.elementId());
+        summary.put("floorIndex", location.floorIndex());
+        summary.put("beaconId", beacon != null ? beacon.getId() : null);
+        summary.put("beaconName", beacon != null ? beacon.getName() : null);
+        summary.put("beaconNo", beacon != null ? beacon.getBeaconNo() : null);
+        summary.put("beaconX", beacon != null ? beacon.getX() : null);
+        summary.put("beaconY", beacon != null ? beacon.getY() : null);
+        summary.put("mappingId", mapping != null ? mapping.getId() : null);
+        summary.put("mappingBeaconElementId", mapping != null ? mapping.getBeaconElementId() : null);
+        summary.put("mappingZoneElementId", mapping != null ? mapping.getZoneElementId() : null);
+        summary.put("mappingElementId", mapping != null ? mapping.getElementId() : null);
+        summary.put("mappingZoneType", mapping != null ? mapping.getZoneType() : null);
+        summary.put("mappingPlacementName", mapping != null ? mapping.getPlacementName() : null);
+
+        return summary;
+    }
 
     private record ParsedRouteMap(
             List<Map<String, Object>> elementsJson,
