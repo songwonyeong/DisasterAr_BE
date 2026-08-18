@@ -372,7 +372,8 @@ public class MonitoringService {
 
                 /*
                  * 현재 활성 구조도에 없는 zoneElementId는 내려주지 않는다.
-                 * 단, zoneElementId가 null인 복도/공용공간 비콘은 아래에서 beacon 좌표로 내려준다.
+                 * BEACON/비콘/건물윤곽은 제외한다.
+                 * 단, 일반 방("방", "ROOM")도 학생 위치 표시용 zone으로 허용한다.
                  */
                 if (zoneElement == null || !isMonitoringZoneElement(zoneElement)) {
                     continue;
@@ -562,8 +563,8 @@ public class MonitoringService {
 
                             .x(resolveDouble(element, "x", beacon.getX()))
                             .y(resolveDouble(element, "y", beacon.getY()))
-                            .width(resolveDouble(element, "width", null))
-                            .height(resolveDouble(element, "height", null))
+                            .width(resolveDouble(element, "width", 28.0))
+                            .height(resolveDouble(element, "height", 28.0))
 
                             .studentCount(studentResponses.size())
                             .students(studentResponses)

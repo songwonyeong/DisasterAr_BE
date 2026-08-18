@@ -151,7 +151,7 @@ public class ScenarioAdminService {
                 )
         );
 
-        String zoneElementId = mapping.getEffectiveZoneElementId();
+        String zoneElementId = mapping.getZoneElementId();
 
         if (zoneElementId != null && !zoneElementId.isBlank()) {
             triggeredIdSet.addAll(

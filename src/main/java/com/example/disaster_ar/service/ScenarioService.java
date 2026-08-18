@@ -2312,7 +2312,7 @@ public class ScenarioService {
                 .findByBeacon_IdAndActiveTrue(student.getLastBeacon().getId())
                 .orElseThrow(() -> new IllegalArgumentException("현재 비콘의 활성 구조도 element 매핑이 없습니다."));
 
-        String currentElementId = mapping.getEffectiveZoneElementId();
+        String currentElementId = mapping.getZoneElementId();
 
         if (currentElementId == null || currentElementId.isBlank()) {
             throw new IllegalArgumentException("현재 비콘의 zoneElementId 정보가 없습니다.");
@@ -2639,7 +2639,7 @@ public class ScenarioService {
 
         return beaconElementMapRepositoryV4
                 .findByBeacon_IdAndActiveTrue(student.getLastBeacon().getId())
-                .map(BeaconElementMapV4::getEffectiveZoneElementId)
+                .map(BeaconElementMapV4::getZoneElementId)
                 .orElse(null);
     }
 

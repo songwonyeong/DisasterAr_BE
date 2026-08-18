@@ -169,9 +169,9 @@ public class BeaconTrackingService {
         );
 
         /*
-         * element/zone 기반 미션은 실제 zoneElementId가 있는 매핑에서만 처리한다.
-         * 복도/CORRIDOR 매핑은 elementId에 beaconId 또는 beaconElementId가 들어갈 수 있으므로
-         * getEffectiveZoneElementId()를 쓰면 beaconId를 zoneId로 착각할 수 있다.
+         * 구역 기반 미션/트리거는 실제 zoneElementId가 있을 때만 처리한다.
+         * 복도/CORRIDOR 매핑은 elementId/beaconElementId에 네비용 비콘 id를 가질 수 있으므로
+         * getEffectiveZoneElementId()를 쓰면 비콘 id를 zone id로 오인할 수 있다.
          */
 
         String zoneElementId = mapping.getZoneElementId();

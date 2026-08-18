@@ -3479,17 +3479,15 @@ public class RoomService {
     }
 
     private BeaconElementMapResponse toBeaconElementMapResponse(BeaconElementMapV4 mapping) {
-        String effectiveZoneElementId = mapping.getEffectiveZoneElementId();
-
         return BeaconElementMapResponse.builder()
                 .id(mapping.getId())
                 .schoolId(mapping.getSchool() != null ? mapping.getSchool().getId() : null)
                 .floorIndex(mapping.getFloorIndex())
                 .beaconId(mapping.getBeacon() != null ? mapping.getBeacon().getId() : null)
                 .beaconName(mapping.getBeacon() != null ? mapping.getBeacon().getName() : null)
-                .elementId(effectiveZoneElementId)
+                .elementId(mapping.getElementId())
                 .beaconElementId(mapping.getBeaconElementId())
-                .zoneElementId(effectiveZoneElementId)
+                .zoneElementId(mapping.getZoneElementId())
                 .placementName(mapping.getPlacementName())
                 .zoneType(mapping.getZoneType())
                 .thresholdRssi(mapping.getEffectiveThresholdRssi())

@@ -25,6 +25,9 @@ import java.util.*;
 @RequiredArgsConstructor
 public class AiPayloadService {
 
+    private static final double DEFAULT_BEACON_MARKER_SIZE = 28.0;
+    private static final String VIRTUAL_BEACON_ELEMENT_PREFIX = "beacon-";
+
     private final StudentRepositoryV4 studentRepositoryV4;
     private final ScenarioTeamMemberRepositoryV4 scenarioTeamMemberRepositoryV4;
     private final QuizSubmissionRepositoryV4 quizSubmissionRepositoryV4;
@@ -343,13 +346,22 @@ public class AiPayloadService {
 
         ParsedRouteMap parsedMap = parseRouteMap(mapVersion.getFloorsJson());
 
+        CurrentBeaconLocation currentLocation = null;
+
         String currentBeaconElementId = resolveRequestElementId(
                 request.getCurrentBeacon(),
                 request.getCurrentBeaconElementId()
         );
 
         if (currentBeaconElementId == null) {
-            currentBeaconElementId = resolveCurrentBeaconElementId(student);
+            currentLocation = resolveCurrentBeaconLocation(student);
+            currentBeaconElementId = currentLocation != null
+                    ? currentLocation.elementId()
+                    : null;
+        }
+
+        if (currentLocation != null) {
+            ensureBeaconElementExists(parsedMap, currentLocation);
         }
 
         if (currentBeaconElementId == null) {
@@ -459,29 +471,150 @@ public class AiPayloadService {
         return null;
     }
 
-    private String resolveCurrentBeaconElementId(StudentV4 student) {
+    private CurrentBeaconLocation resolveCurrentBeaconLocation(StudentV4 student) {
         if (student == null || student.getLastBeacon() == null) {
             return null;
         }
 
-        String beaconId = student.getLastBeacon().getId();
+        BeaconV4 beacon = student.getLastBeacon();
+        String beaconId = beacon.getId();
 
         return beaconElementMapRepositoryV4
                 .findByBeacon_IdAndActiveTrue(beaconId)
                 .map(mapping -> {
-                    if (mapping.getBeaconElementId() != null && !mapping.getBeaconElementId().isBlank()) {
-                        return mapping.getBeaconElementId();
+                    String beaconElementId = asString(mapping.getBeaconElementId());
+                    if (beaconElementId != null) {
+                        return new CurrentBeaconLocation(
+                                beaconElementId,
+                                beacon,
+                                mapping
+                        );
                     }
 
-                    if (mapping.getEffectiveZoneElementId() != null
-                            && !mapping.getEffectiveZoneElementId().isBlank()) {
-                        return mapping.getEffectiveZoneElementId();
+                    String zoneElementId = asString(mapping.getZoneElementId());
+                    if (zoneElementId != null) {
+                        return new CurrentBeaconLocation(
+                                zoneElementId,
+                                beacon,
+                                mapping
+                        );
                     }
 
-                    return beaconId;
+                    return new CurrentBeaconLocation(
+                            buildVirtualBeaconElementId(beacon),
+                            beacon,
+                            mapping
+                    );
                 })
-                .orElse(beaconId);
+                .orElseGet(() -> new CurrentBeaconLocation(
+                        buildVirtualBeaconElementId(beacon),
+                        beacon,
+                        null
+                ));
     }
+
+    private void ensureBeaconElementExists(
+            ParsedRouteMap parsedMap,
+            CurrentBeaconLocation currentLocation
+    ) {
+        if (parsedMap == null || currentLocation == null) {
+            return;
+        }
+
+        String elementId = asString(currentLocation.elementId());
+        BeaconV4 beacon = currentLocation.beacon();
+
+        if (elementId == null || beacon == null) {
+            return;
+        }
+
+        if (containsElementId(parsedMap.elementsJson(), elementId)) {
+            return;
+        }
+
+        if (beacon.getX() == null || beacon.getY() == null) {
+            return;
+        }
+
+        Integer floorIndex = beacon.getFloorIndex();
+
+        Map<String, Object> beaconElement = new LinkedHashMap<>();
+        beaconElement.put("id", elementId);
+        beaconElement.put("type", "BEACON");
+        beaconElement.put("elementType", "BEACON");
+        beaconElement.put("floor", floorIndex);
+        beaconElement.put("floorIndex", floorIndex);
+        beaconElement.put("x", beacon.getX());
+        beaconElement.put("y", beacon.getY());
+        beaconElement.put("width", DEFAULT_BEACON_MARKER_SIZE);
+        beaconElement.put("height", DEFAULT_BEACON_MARKER_SIZE);
+        beaconElement.put("name", resolveBeaconName(beacon));
+        beaconElement.put("serverBeaconId", beacon.getId());
+        beaconElement.put("beaconNo", beacon.getBeaconNo());
+        beaconElement.put("beaconUuid", beacon.getUuid());
+        beaconElement.put("beaconMajor", beacon.getMajor());
+        beaconElement.put("beaconMinor", beacon.getMinor());
+
+        parsedMap.elementsJson().add(beaconElement);
+
+        Map<String, Object> tagValue = new LinkedHashMap<>();
+        tagValue.put("zone_type", "normal");
+        tagValue.put("passable", true);
+        tagValue.put("floor", floorIndex);
+        tagValue.put("element_id", elementId);
+
+        parsedMap.tagsMap().put(elementId, tagValue);
+    }
+
+    private boolean containsElementId(
+            List<Map<String, Object>> elements,
+            String elementId
+    ) {
+        if (elements == null || elementId == null || elementId.isBlank()) {
+            return false;
+        }
+
+        for (Map<String, Object> element : elements) {
+            String id = asString(element.get("id"));
+
+            if (elementId.equals(id)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private String buildVirtualBeaconElementId(BeaconV4 beacon) {
+        if (beacon == null || beacon.getId() == null || beacon.getId().isBlank()) {
+            return null;
+        }
+
+        return VIRTUAL_BEACON_ELEMENT_PREFIX + beacon.getId();
+    }
+
+    private String resolveBeaconName(BeaconV4 beacon) {
+        if (beacon == null) {
+            return "비콘";
+        }
+
+        String name = asString(beacon.getName());
+        if (name != null) {
+            return name;
+        }
+
+        if (beacon.getBeaconNo() != null) {
+            return "비콘 " + beacon.getBeaconNo();
+        }
+
+        return "비콘";
+    }
+
+    private record CurrentBeaconLocation(
+            String elementId,
+            BeaconV4 beacon,
+            BeaconElementMapV4 mapping
+    ) {}
 
     private record ParsedRouteMap(
             List<Map<String, Object>> elementsJson,
