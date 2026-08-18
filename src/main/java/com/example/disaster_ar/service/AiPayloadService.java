@@ -368,8 +368,9 @@ public class AiPayloadService {
             throw new IllegalArgumentException("학생의 현재 비콘 위치가 없습니다.");
         }
 
-        Integer currentBeaconFloor = resolveRequestFloor(
+        Integer currentBeaconFloor = resolveCurrentBeaconFloor(
                 request.getCurrentBeacon(),
+                currentLocation,
                 parsedMap.elementsJson(),
                 currentBeaconElementId
         );
@@ -420,6 +421,23 @@ public class AiPayloadService {
         payload.put("target_node_id", resolvedTargetNodeId);
 
         return payload;
+    }
+
+    private Integer resolveCurrentBeaconFloor(
+            AiRouteRequest.ElementRef ref,
+            CurrentBeaconLocation currentLocation,
+            List<Map<String, Object>> elements,
+            String elementId
+    ) {
+        if (ref != null && ref.getFloor() != null) {
+            return ref.getFloor();
+        }
+
+        if (currentLocation != null && currentLocation.floorIndex() != null) {
+            return currentLocation.floorIndex();
+        }
+
+        return findFloorByElementId(elements, elementId);
     }
 
     private String resolveRequestElementId(
@@ -482,10 +500,15 @@ public class AiPayloadService {
         return beaconElementMapRepositoryV4
                 .findByBeacon_IdAndActiveTrue(beaconId)
                 .map(mapping -> {
+                    Integer floorIndex = mapping.getFloorIndex() != null
+                            ? mapping.getFloorIndex()
+                            : beacon.getFloorIndex();
+
                     String beaconElementId = asString(mapping.getBeaconElementId());
                     if (beaconElementId != null) {
                         return new CurrentBeaconLocation(
                                 beaconElementId,
+                                floorIndex,
                                 beacon,
                                 mapping
                         );
@@ -495,6 +518,7 @@ public class AiPayloadService {
                     if (zoneElementId != null) {
                         return new CurrentBeaconLocation(
                                 zoneElementId,
+                                floorIndex,
                                 beacon,
                                 mapping
                         );
@@ -502,12 +526,14 @@ public class AiPayloadService {
 
                     return new CurrentBeaconLocation(
                             buildVirtualBeaconElementId(beacon),
+                            floorIndex,
                             beacon,
                             mapping
                     );
                 })
                 .orElseGet(() -> new CurrentBeaconLocation(
                         buildVirtualBeaconElementId(beacon),
+                        beacon.getFloorIndex(),
                         beacon,
                         null
                 ));
@@ -536,7 +562,9 @@ public class AiPayloadService {
             return;
         }
 
-        Integer floorIndex = beacon.getFloorIndex();
+        Integer floorIndex = currentLocation.floorIndex() != null
+                ? currentLocation.floorIndex()
+                : beacon.getFloorIndex();
 
         Map<String, Object> beaconElement = new LinkedHashMap<>();
         beaconElement.put("id", elementId);
@@ -612,6 +640,7 @@ public class AiPayloadService {
 
     private record CurrentBeaconLocation(
             String elementId,
+            Integer floorIndex,
             BeaconV4 beacon,
             BeaconElementMapV4 mapping
     ) {}
