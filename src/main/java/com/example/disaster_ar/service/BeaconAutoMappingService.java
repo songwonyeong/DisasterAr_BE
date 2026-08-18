@@ -98,21 +98,32 @@ public class BeaconAutoMappingService {
                 }
 
                 ZoneElement matchedZone = findContainingZone(beacon, zones);
-
-                if (matchedZone == null) {
-                    unmatchedBeacons++;
-                    continue;
-                }
-
                 String beaconElementId = findBeaconElementId(beacon, elements);
 
-                boolean created = upsertMapping(
-                        classroom,
-                        floorIndex,
-                        beacon,
-                        matchedZone,
-                        beaconElementId
-                );
+                boolean created;
+
+                if (matchedZone == null) {
+                    /*
+                     * 복도/공용공간처럼 특정 방/구역 rect 안에 들어가지 않는 비콘도
+                     * 게임 중 스캔/모니터링에서 사용할 수 있도록 active mapping row를 만든다.
+                     */
+                    created = upsertCorridorMapping(
+                            classroom,
+                            floorIndex,
+                            beacon,
+                            beaconElementId
+                    );
+
+                    unmatchedBeacons++;
+                } else {
+                    created = upsertMapping(
+                            classroom,
+                            floorIndex,
+                            beacon,
+                            matchedZone,
+                            beaconElementId
+                    );
+                }
 
                 if (created) {
                     mappingsCreated++;
@@ -536,17 +547,20 @@ public class BeaconAutoMappingService {
                 continue;
             }
 
-            String zoneElementId = trimToNull(mapping.getEffectiveZoneElementId());
+            String zoneElementId = trimToNull(mapping.getZoneElementId());
 
             /*
-             * 핵심:
-             * 현재 활성 구조도에 없는 zoneElementId면 stale mapping으로 본다.
-             *
-             * 현재 케이스:
-             * auto-room-14는 새 구조도에 없음
-             * → inactive 처리됨
+             * zoneElementId가 없는 매핑은 복도/공용공간 비콘이다.
+             * 특정 방/구역 rect에 속하지 않는 것이 정상일 수 있으므로 stale로 보지 않는다.
              */
-            if (zoneElementId == null || !currentZoneElementIds.contains(zoneElementId)) {
+            if (zoneElementId == null) {
+                continue;
+            }
+
+            /*
+             * 현재 활성 구조도에 없는 zoneElementId면 stale mapping으로 본다.
+             */
+            if (!currentZoneElementIds.contains(zoneElementId)) {
                 mapping.setActive(false);
                 mapping.setUpdatedAt(now);
                 beaconElementMapRepositoryV4.save(mapping);
@@ -700,6 +714,69 @@ public class BeaconAutoMappingService {
         }
 
         return 999;
+    }
+
+    private boolean upsertCorridorMapping(
+            ClassroomV4 classroom,
+            Integer floorIndex,
+            BeaconV4 beacon,
+            String beaconElementId
+    ) {
+        Optional<BeaconElementMapV4> existing =
+                beaconElementMapRepositoryV4.findByBeacon_Id(beacon.getId());
+
+        boolean created = existing.isEmpty();
+        LocalDateTime now = LocalDateTime.now();
+
+        BeaconElementMapV4 mapping = existing.orElseGet(() -> BeaconElementMapV4.builder()
+                .id(UUID.randomUUID().toString())
+                .createdAt(now)
+                .thresholdRssi(DEFAULT_THRESHOLD_RSSI)
+                .active(true)
+                .build()
+        );
+
+        if (mapping.getCreatedAt() == null) {
+            mapping.setCreatedAt(now);
+        }
+
+        String placementName = trimToNull(beacon.getName());
+        if (placementName == null && beacon.getBeaconNo() != null) {
+            placementName = "비콘 " + beacon.getBeaconNo();
+        }
+        if (placementName == null) {
+            placementName = "복도 비콘";
+        }
+
+        mapping.setSchool(classroom.getSchool());
+        mapping.setFloorIndex(floorIndex);
+        mapping.setBeacon(beacon);
+
+        /*
+         * 복도/공용공간 비콘은 대표 zoneElementId가 없다.
+         * element_id는 DB non-null/legacy 호환용으로 beaconElementId 또는 beaconId를 저장한다.
+         */
+        mapping.setElementId(
+                beaconElementId != null && !beaconElementId.isBlank()
+                        ? beaconElementId
+                        : beacon.getId()
+        );
+        mapping.setBeaconElementId(beaconElementId);
+        mapping.setZoneElementId(null);
+
+        mapping.setPlacementName(placementName);
+        mapping.setZoneType("CORRIDOR");
+
+        if (mapping.getThresholdRssi() == null || mapping.getThresholdRssi() == 0) {
+            mapping.setThresholdRssi(DEFAULT_THRESHOLD_RSSI);
+        }
+
+        mapping.setActive(true);
+        mapping.setUpdatedAt(now);
+
+        beaconElementMapRepositoryV4.save(mapping);
+
+        return created;
     }
 
     private boolean upsertMapping(

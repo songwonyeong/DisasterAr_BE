@@ -169,12 +169,12 @@ public class BeaconTrackingService {
         );
 
         /*
-         * 기존 elementId가 아니라 zoneElementId 기준으로 처리한다.
-         * getEffectiveZoneElementId()는 zoneElementId가 있으면 zoneElementId,
-         * 없으면 기존 elementId를 fallback으로 반환한다.
+         * element/zone 기반 미션은 실제 zoneElementId가 있는 매핑에서만 처리한다.
+         * 복도/CORRIDOR 매핑은 elementId에 beaconId 또는 beaconElementId가 들어갈 수 있으므로
+         * getEffectiveZoneElementId()를 쓰면 beaconId를 zoneId로 착각할 수 있다.
          */
 
-        String zoneElementId = mapping.getEffectiveZoneElementId();
+        String zoneElementId = mapping.getZoneElementId();
 
         if (zoneElementId == null || zoneElementId.isBlank()) {
             return;

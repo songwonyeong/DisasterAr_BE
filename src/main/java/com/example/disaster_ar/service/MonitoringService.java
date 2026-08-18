@@ -362,23 +362,21 @@ public class MonitoringService {
              * elementId / zoneElementId는 구역 기준.
              * beaconElementId는 비콘 마커 위치 기준.
              */
-            String zoneElementId = trimToNull(mapping.getEffectiveZoneElementId());
-
-            if (zoneElementId == null) {
-                continue;
-            }
-
+            String zoneElementId = trimToNull(mapping.getZoneElementId());
             String beaconElementId = trimToNull(mapping.getBeaconElementId());
 
-            Map<String, Object> zoneElement = findElementById(elements, zoneElementId);
+            Map<String, Object> zoneElement = null;
 
-            /*
-             * 현재 활성 구조도에 없는 zoneElementId는 내려주지 않는다.
-             * BEACON/비콘/건물윤곽은 제외한다.
-             * 단, 일반 방("방", "ROOM")도 학생 위치 표시용 zone으로 허용한다.
-             */
-            if (zoneElement == null || !isMonitoringZoneElement(zoneElement)) {
-                continue;
+            if (zoneElementId != null) {
+                zoneElement = findElementById(elements, zoneElementId);
+
+                /*
+                 * 현재 활성 구조도에 없는 zoneElementId는 내려주지 않는다.
+                 * 단, zoneElementId가 null인 복도/공용공간 비콘은 아래에서 beacon 좌표로 내려준다.
+                 */
+                if (zoneElement == null || !isMonitoringZoneElement(zoneElement)) {
+                    continue;
+                }
             }
 
             Map<String, Object> beaconElement = findElementById(elements, beaconElementId);
