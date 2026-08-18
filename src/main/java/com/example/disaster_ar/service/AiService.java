@@ -12,6 +12,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -22,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class AiService {
@@ -200,6 +202,12 @@ public class AiService {
     private JsonNode postJson(String path, Object body) {
         String url = normalizeBaseUrl(colabBaseUrl) + path;
 
+        log.info("🔥 4-1. AI 서버 HTTP 요청 시작 path={}, url={}, timeoutSeconds={}, payloadSummary={}",
+                path,
+                url,
+                timeoutSeconds,
+                summarizePayload(body));
+
         try {
             JsonNode response = webClient.post()
                     .uri(url)
@@ -207,11 +215,50 @@ public class AiService {
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.APPLICATION_JSON)
                     .bodyValue(body)
-                    .retrieve()
-                    .bodyToMono(JsonNode.class)
+                    .exchangeToMono(clientResponse -> {
+                        log.info("🔥 5. AI 서버 HTTP status path={}, url={}, status={}",
+                                path,
+                                url,
+                                clientResponse.statusCode());
+
+                        if (clientResponse.statusCode().isError()) {
+                            return clientResponse.bodyToMono(String.class)
+                                    .defaultIfEmpty("")
+                                    .flatMap(responseBody -> {
+                                        log.error("🔥 5-ERROR. AI 서버 HTTP 오류 path={}, url={}, status={}, body={}",
+                                                path,
+                                                url,
+                                                clientResponse.statusCode(),
+                                                abbreviate(responseBody, 4000));
+
+                                        return reactor.core.publisher.Mono.<JsonNode>error(new ApiException(
+                                                HttpStatus.BAD_GATEWAY,
+                                                "AI_SERVER_HTTP_ERROR",
+                                                "AI 서버 HTTP 오류: "
+                                                        + clientResponse.statusCode()
+                                                        + " / URL: "
+                                                        + url
+                                                        + " / 응답: "
+                                                        + responseBody
+                                        ));
+                                    });
+                        }
+
+                        return clientResponse.bodyToMono(JsonNode.class)
+                                .doOnNext(responseBody -> log.info("🔥 5-1. AI 서버 응답 body path={}, body={}",
+                                        path,
+                                        abbreviateJson(responseBody, 4000)))
+                                .switchIfEmpty(reactor.core.publisher.Mono.error(new ApiException(
+                                        HttpStatus.BAD_GATEWAY,
+                                        "AI_SERVER_EMPTY_RESPONSE",
+                                        "AI 서버 응답이 비어 있습니다. 호출 URL: " + url
+                                )));
+                    })
                     .block(Duration.ofSeconds(timeoutSeconds));
 
             if (response == null) {
+                log.error("🔥 5-ERROR. AI 서버 응답 null path={}, url={}", path, url);
+
                 throw new ApiException(
                         HttpStatus.BAD_GATEWAY,
                         "AI_SERVER_EMPTY_RESPONSE",
@@ -219,13 +266,25 @@ public class AiService {
                 );
             }
 
+            log.info("🔥 5-2. AI 서버 응답 처리 완료 path={}, url={}", path, url);
+
             return response;
 
         } catch (ApiException e) {
+            log.error("🔥 5-ERROR. AI 서버 처리 중 ApiException path={}, url={}, message={}",
+                    path,
+                    url,
+                    e.getMessage());
             throw e;
 
         } catch (WebClientResponseException e) {
             String responseBody = e.getResponseBodyAsString(StandardCharsets.UTF_8);
+
+            log.error("🔥 5-ERROR. AI 서버 WebClientResponseException path={}, url={}, status={}, body={}",
+                    path,
+                    url,
+                    e.getStatusCode(),
+                    abbreviate(responseBody, 4000));
 
             throw new ApiException(
                     HttpStatus.BAD_GATEWAY,
@@ -239,6 +298,12 @@ public class AiService {
             );
 
         } catch (WebClientRequestException e) {
+            log.error("🔥 5-ERROR. AI 서버 연결 실패 path={}, url={}, cause={}",
+                    path,
+                    url,
+                    e.getMessage(),
+                    e);
+
             throw new ApiException(
                     HttpStatus.BAD_GATEWAY,
                     "AI_SERVER_CONNECTION_ERROR",
@@ -249,6 +314,13 @@ public class AiService {
             );
 
         } catch (Exception e) {
+            log.error("🔥 5-ERROR. AI 서버 응답 처리 실패 path={}, url={}, exception={}, message={}",
+                    path,
+                    url,
+                    e.getClass().getSimpleName(),
+                    e.getMessage(),
+                    e);
+
             throw new ApiException(
                     HttpStatus.BAD_GATEWAY,
                     "AI_SERVER_ERROR",
@@ -341,6 +413,81 @@ public class AiService {
             );
         }
 
-        return postJson("/route", payload);
+        log.info("🔥 4-0. AiService.route 진입 payloadSummary={}", summarizePayload(payload));
+
+        JsonNode response = postJson("/route", payload);
+
+        log.info("🔥 5-3. AiService.route 완료 found={}, warning={}, startElementId={}, goalElementId={}",
+                response != null && response.has("found") ? response.get("found").asText() : null,
+                asText(response, "warning"),
+                asText(response, "start_element_id"),
+                asText(response, "goal_element_id"));
+
+        return response;
+    }
+
+    private Map<String, Object> summarizePayload(Object body) {
+        Map<String, Object> summary = new LinkedHashMap<>();
+
+        if (!(body instanceof Map<?, ?> map)) {
+            summary.put("bodyType", body != null ? body.getClass().getSimpleName() : null);
+            return summary;
+        }
+
+        List<String> keys = new ArrayList<>();
+        for (Object key : map.keySet()) {
+            keys.add(String.valueOf(key));
+        }
+
+        summary.put("keys", keys);
+        summary.put("current_beacon", map.get("current_beacon"));
+        summary.put("target", map.get("target"));
+        summary.put("target_node_id", map.get("target_node_id"));
+        summary.put("target_element_id", map.get("target_element_id"));
+        summary.put("current_beacon_element_id", map.get("current_beacon_element_id"));
+        summary.put("stair_positions_exists", map.containsKey("stair_positions"));
+
+        Object elementsObj = map.get("elements_json");
+        if (elementsObj instanceof List<?> elements) {
+            summary.put("elements_json_count", elements.size());
+        }
+
+        Object tagsObj = map.get("tags_map");
+        if (tagsObj instanceof Map<?, ?> tags) {
+            summary.put("tags_map_count", tags.size());
+        }
+
+        Object disasterObj = map.get("disaster_elements");
+        if (disasterObj instanceof List<?> disasterElements) {
+            summary.put("disaster_elements_count", disasterElements.size());
+            summary.put("disaster_elements", disasterElements);
+        }
+
+        Object outlineObj = map.get("outline_bboxes");
+        if (outlineObj instanceof Map<?, ?> outlineBboxes) {
+            summary.put("outline_bboxes_keys", outlineBboxes.keySet());
+        }
+
+        return summary;
+    }
+
+    private String abbreviateJson(JsonNode node, int maxLength) {
+        if (node == null) {
+            return null;
+        }
+
+        return abbreviate(node.toString(), maxLength);
+    }
+
+    private String abbreviate(String text, int maxLength) {
+        if (text == null) {
+            return null;
+        }
+
+        if (maxLength <= 0 || text.length() <= maxLength) {
+            return text;
+        }
+
+        return text.substring(0, maxLength) + "... (truncated, length=" + text.length() + ")";
     }
 }
